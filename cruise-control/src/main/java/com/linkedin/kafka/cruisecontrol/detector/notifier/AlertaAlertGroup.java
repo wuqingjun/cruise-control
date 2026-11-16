@@ -8,7 +8,7 @@ package com.linkedin.kafka.cruisecontrol.detector.notifier;
  * @see <a href="https://docs.alerta.io/en/latest/conventions.html#event-groups">the Alerta event groups conventions</a>
  */
 public enum AlertaAlertGroup {
-    PERFORMANCE("Performance"), STORAGE("Storage");
+    PERFORMANCE("Performance"), STORAGE("Storage"), SECURITY("Security");
 
     private final String _value;
 

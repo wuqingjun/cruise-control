@@ -6,6 +6,7 @@ package com.linkedin.kafka.cruisecontrol.detector.notifier;
 
 import com.linkedin.cruisecontrol.detector.Anomaly;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
+import com.linkedin.kafka.cruisecontrol.detector.AclDriftAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.BrokerFailures;
 import com.linkedin.kafka.cruisecontrol.detector.DiskFailures;
 import com.linkedin.kafka.cruisecontrol.detector.GoalViolations;
@@ -146,6 +147,18 @@ public class SelfHealingNotifier implements AnomalyNotifier {
     boolean autoFixTriggered = _selfHealingEnabled.get(KafkaAnomalyType.MAINTENANCE_EVENT);
     alert(maintenanceEvent, autoFixTriggered, _time.milliseconds(), KafkaAnomalyType.MAINTENANCE_EVENT);
     return autoFixTriggered ? AnomalyNotificationResult.fix() : AnomalyNotificationResult.ignore();
+  }
+
+  /**
+   * Alert only: ACL sync has already re-applied the ACL file if {@code acl.sync.drift.action=REAPPLY}.
+   *
+   * @param aclDrift the detected ACL drift.
+   * @return Ignore.
+   */
+  @Override
+  public AnomalyNotificationResult onAclDrift(AclDriftAnomaly aclDrift) {
+    alert(aclDrift, false, _time.milliseconds(), KafkaAnomalyType.ACL_DRIFT);
+    return AnomalyNotificationResult.ignore();
   }
 
   @Override
@@ -353,6 +366,8 @@ public class SelfHealingNotifier implements AnomalyNotifier {
     _selfHealingEnabled.put(KafkaAnomalyType.MAINTENANCE_EVENT, selfHealingMaintenanceEventEnabledString == null
                                                                 ? selfHealingAllEnabled
                                                                 : Boolean.parseBoolean(selfHealingMaintenanceEventEnabledString));
+    // ACL drift is repaired by ACL sync itself (acl.sync.drift.action), never by self-healing.
+    _selfHealingEnabled.put(KafkaAnomalyType.ACL_DRIFT, false);
     // Set self-healing current state start time.
     _selfHealingEnabled.forEach((key, value) -> _selfHealingStateChangeTimeMs.get(value).put(key, _notifierStartTimeMs));
   }

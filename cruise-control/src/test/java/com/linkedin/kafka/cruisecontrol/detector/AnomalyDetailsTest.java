@@ -74,6 +74,11 @@ public class AnomalyDetailsTest {
           // Hence, we cannot record our own behavior for maintenanceEvent.toString().
           replayAndVerify(mockAnomalyState, details, maintenanceEvent);
           break;
+        case ACL_DRIFT:
+          AclDriftAnomaly aclDrift = EasyMock.mock(AclDriftAnomaly.class);
+          // toString() is built into EasyMock class mocks (see above).
+          replayAndVerify(mockAnomalyState, details, aclDrift);
+          break;
         default:
           throw new IllegalStateException("Unrecognized anomaly type " + anomalyType);
       }
