@@ -30,7 +30,9 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.resource.ResourcePattern;
 import org.apache.kafka.common.utils.Time;
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.client.ZKClientConfig;
+import org.apache.zookeeper.data.Id;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,6 +101,7 @@ public class AclSyncManager implements AutoCloseable {
     private final List<String> _principalTypes;
     private final long _verifyTimeoutMs;
     private final String _owner;
+    private final long _notificationRetentionMs;
 
     /**
      * @param checkIntervalMs File check interval.
@@ -110,6 +113,22 @@ public class AclSyncManager implements AutoCloseable {
      */
     public Settings(long checkIntervalMs, long driftCheckIntervalMs, boolean driftReapply, List<String> principalTypes,
                     long verifyTimeoutMs, String owner) {
+      this(checkIntervalMs, driftCheckIntervalMs, driftReapply, principalTypes, verifyTimeoutMs, owner,
+           AclSyncConfig.DEFAULT_ACL_SYNC_NOTIFICATION_RETENTION_MS);
+    }
+
+    /**
+     * @param checkIntervalMs File check interval.
+     * @param driftCheckIntervalMs Drift check interval.
+     * @param driftReapply Whether drift is repaired ({@code REAPPLY}) or only reported.
+     * @param principalTypes Allowed principal types.
+     * @param verifyTimeoutMs How long to wait for the brokers.
+     * @param owner Lock owner name (host / process).
+     * @param notificationRetentionMs Age after which Cruise Control deletes change notifications.
+     */
+    public Settings(long checkIntervalMs, long driftCheckIntervalMs, boolean driftReapply, List<String> principalTypes,
+                    long verifyTimeoutMs, String owner, long notificationRetentionMs) {
+      _notificationRetentionMs = notificationRetentionMs;
       _checkIntervalMs = checkIntervalMs;
       _driftCheckIntervalMs = driftCheckIntervalMs;
       _driftReapply = driftReapply;
@@ -131,6 +150,7 @@ public class AclSyncManager implements AutoCloseable {
   private volatile String _lastError;
   /** Log each distinct problem once while it persists (checks run every few seconds); repeats go to DEBUG. */
   private boolean _noFileLogged;
+  private boolean _znodeAclsEnsured;
   private String _currentSha;
   private String _rejectedSha;
   private String _rejectedError;
@@ -195,14 +215,14 @@ public class AclSyncManager implements AutoCloseable {
     String root = aclRoot(config);
     ZKClientConfig zkClientConfig = ZKConfigUtils.zkClientConfigFromKafkaConfig(config);
     int maxBatchBytes = config.getInt(AclSyncConfig.ACL_SYNC_MAX_BATCH_BYTES_CONFIG);
-    StoreFactory storeFactory = () -> new AclZkStore(AclZkStore.connect(root, zkClientConfig, ZK_SESSION_TIMEOUT_MS,
-                                                                        ZK_SESSION_TIMEOUT_MS), maxBatchBytes);
+    StoreFactory storeFactory = storeFactory(root, zkClientConfig, maxBatchBytes, znodeAclSettings(config));
     Settings settings = new Settings(config.getLong(AclSyncConfig.ACL_SYNC_CHECK_INTERVAL_MS_CONFIG),
                                      config.getLong(AclSyncConfig.ACL_SYNC_DRIFT_CHECK_INTERVAL_MS_CONFIG),
                                      "REAPPLY".equals(config.getString(AclSyncConfig.ACL_SYNC_DRIFT_ACTION_CONFIG)),
                                      config.getList(AclSyncConfig.ACL_SYNC_PRINCIPAL_TYPES_CONFIG),
                                      config.getLong(AclSyncConfig.ACL_SYNC_VERIFY_TIMEOUT_MS_CONFIG),
-                                     ManagementFactory.getRuntimeMXBean().getName());
+                                     ManagementFactory.getRuntimeMXBean().getName(),
+                                     config.getLong(AclSyncConfig.ACL_SYNC_NOTIFICATION_RETENTION_MS_CONFIG));
     LOG.info("ACL sync: file {}, signature {} ({}), ACL root {}.", file, reader.signatureFile(),
              required ? "required" : "NOT required", root);
     AclSyncManager manager = new AclSyncManager(settings, reader, storeFactory, new AdminAclSyncVerifier(admin, time), driftListener,
@@ -211,6 +231,81 @@ public class AclSyncManager implements AutoCloseable {
       manager.registerMetrics(metricRegistry);
     }
     return manager;
+  }
+
+  /**
+   * Znode ACL settings: auth scheme and broker identities, or {@code null} if znode ACLs are disabled.
+   *
+   * @param config Cruise Control config.
+   * @return Scheme and broker identities, or null.
+   */
+  static ZnodeAclSettings znodeAclSettings(KafkaCruiseControlConfig config) {
+    if (!config.getBoolean(AclSyncConfig.ACL_SYNC_ZOOKEEPER_ACL_ENABLED_CONFIG)) {
+      return null;
+    }
+    String scheme = config.getString(AclSyncConfig.ACL_SYNC_ZOOKEEPER_AUTH_SCHEME_CONFIG);
+    List<Id> brokers = AclZnodePolicy.parseIdentities(config.getString(AclSyncConfig.ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES_CONFIG),
+                                                      scheme);
+    if (brokers.isEmpty()) {
+      throw new ConfigException(AclSyncConfig.ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES_CONFIG + " must be set when "
+                                + AclSyncConfig.ACL_SYNC_ZOOKEEPER_ACL_ENABLED_CONFIG + "=true.");
+    }
+    return new ZnodeAclSettings(scheme, brokers);
+  }
+
+  /** Auth scheme and broker identities for protecting the ACL subtree. */
+  public static final class ZnodeAclSettings {
+    private final String _scheme;
+    private final List<Id> _brokers;
+
+    /**
+     * @param scheme ZooKeeper auth scheme, e.g. {@code x509}.
+     * @param brokers The brokers' identities.
+     */
+    public ZnodeAclSettings(String scheme, List<Id> brokers) {
+      _scheme = scheme;
+      _brokers = List.copyOf(brokers);
+    }
+  }
+
+  /**
+   * A store factory that connects to the ACL root and, if znode ACLs are enabled, builds the policy from this session's
+   * own identity ({@code whoAmI}); refuses to work on a session without that identity (e.g. a plaintext connection).
+   *
+   * @param root ACL root connect string.
+   * @param zkClientConfig ZooKeeper client config (TLS).
+   * @param maxBatchBytes Batch limit.
+   * @param znodeAcls Znode ACL settings, or {@code null} for open znodes.
+   * @return The factory.
+   */
+  public static StoreFactory storeFactory(String root, ZKClientConfig zkClientConfig, int maxBatchBytes, ZnodeAclSettings znodeAcls) {
+    return () -> {
+      ZooKeeper zk = AclZkStore.connect(root, zkClientConfig, ZK_SESSION_TIMEOUT_MS, ZK_SESSION_TIMEOUT_MS);
+      if (znodeAcls == null) {
+        return new AclZkStore(zk, maxBatchBytes);
+      }
+      try {
+        Optional<Id> self = AclZkStore.authenticatedId(zk, znodeAcls._scheme);
+        if (self.isEmpty()) {
+          throw new IOException(String.format("The ZooKeeper session to %s has no %s identity (is TLS with a client certificate "
+                                              + "configured?); znode ACLs can't be set.", root, znodeAcls._scheme));
+        }
+        AclZnodePolicy policy = AclZnodePolicy.protect(self.get(), znodeAcls._brokers);
+        LOG.info("ACL sync ZooKeeper session authenticated as {}:{}; znode ACLs: {}.", self.get().getScheme(), self.get().getId(),
+                 policy);
+        return new AclZkStore(zk, maxBatchBytes, policy);
+      } catch (IOException | RuntimeException e) {
+        AclZkStore.closeQuietly(zk);
+        throw e;
+      } catch (KeeperException e) {
+        AclZkStore.closeQuietly(zk);
+        throw new IOException("whoAmI failed on " + root, e);
+      } catch (InterruptedException e) {
+        AclZkStore.closeQuietly(zk);
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while connecting to " + root, e);
+      }
+    };
   }
 
   /**
@@ -310,6 +405,10 @@ public class AclSyncManager implements AutoCloseable {
   public synchronized Outcome checkFile() {
     return record(() -> {
       _currentSha = null;
+      Outcome maintenance = maintain(store());
+      if (maintenance != null) {
+        return maintenance;
+      }
       Optional<AclFileReader.AclFile> file = _reader.read();
       if (file.isEmpty()) {
         if (!_noFileLogged) {
@@ -358,6 +457,19 @@ public class AclSyncManager implements AutoCloseable {
         return null;
       }
       AclTree desired = load(file.get());
+      if (store.policy().isProtecting()) {
+        Outcome locked = withLock(store, () -> {
+          int changed = store.ensureZnodeAcls();
+          if (changed > 0) {
+            LOG.warn("ZooKeeper ACLs of {} node(s) in the ACL subtree had been changed (only a ZooKeeper super user can do "
+                     + "that); restored.", changed);
+          }
+          return null;
+        });
+        if (locked != null) {
+          return locked;
+        }
+      }
       AclZkStore.Snapshot snapshot = store.readCurrent();
       AclTreeDiff.Result zkDiff = AclTreeDiff.diff(snapshot.tree(), desired, state.get().state().unmanaged());
       List<ResourcePattern> brokerDifferences = _verifier.verify(snapshot.tree(), _settings._verifyTimeoutMs);
@@ -601,6 +713,31 @@ public class AclSyncManager implements AutoCloseable {
       _store.close();
       _store = null;
     }
+    _znodeAclsEnsured = false;
+  }
+
+  /**
+   * Housekeeping on every file check, file or not: once per ZooKeeper session make the znode ACLs match the policy
+   * (under the lock), then delete expired change notifications.
+   *
+   * @param store Store.
+   * @return {@link Outcome#LOCKED} if the znode ACLs couldn't be checked because another instance holds the lock, else null.
+   * @throws Exception On ZooKeeper errors.
+   */
+  private Outcome maintain(AclZkStore store) throws Exception {
+    if (store.policy().isProtecting() && !_znodeAclsEnsured) {
+      Outcome locked = withLock(store, () -> {
+        int changed = store.ensureZnodeAcls();
+        LOG.info("ZooKeeper ACLs of the ACL subtree checked ({} node(s) changed): {}.", changed, store.policy());
+        return null;
+      });
+      if (locked != null) {
+        return locked;
+      }
+      _znodeAclsEnsured = true;
+    }
+    store.purgeNotifications(_settings._notificationRetentionMs, _time.milliseconds());
+    return null;
   }
 
   private static List<String> locations(Collection<ResourcePattern> patterns) {

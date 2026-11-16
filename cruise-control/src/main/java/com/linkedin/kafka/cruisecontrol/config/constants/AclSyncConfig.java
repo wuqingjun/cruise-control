@@ -115,6 +115,43 @@ public final class AclSyncConfig {
       + "authorizer stores ACLs. Must equal the brokers' authorizer.zookeeper.url. If not set, zookeeper.connect is used, as "
       + "the brokers do.";
 
+  /**
+   * <code>acl.sync.zookeeper.acl.enabled</code>
+   */
+  public static final String ACL_SYNC_ZOOKEEPER_ACL_ENABLED_CONFIG = "acl.sync.zookeeper.acl.enabled";
+  public static final boolean DEFAULT_ACL_SYNC_ZOOKEEPER_ACL_ENABLED = false;
+  public static final String ACL_SYNC_ZOOKEEPER_ACL_ENABLED_DOC = "Whether Cruise Control protects the brokers' ACL storage in "
+      + "ZooKeeper with znode ACLs, so that only Cruise Control can change Kafka ACLs there: Cruise Control gets all "
+      + "permissions, the brokers (acl.sync.zookeeper.broker.identities) read (plus create on the top-level ACL folders), "
+      + "nobody else anything. Requires an authenticated ZooKeeper connection (TLS client certificate, "
+      + "acl.sync.zookeeper.auth.scheme). Existing nodes are updated.";
+
+  /**
+   * <code>acl.sync.zookeeper.auth.scheme</code>
+   */
+  public static final String ACL_SYNC_ZOOKEEPER_AUTH_SCHEME_CONFIG = "acl.sync.zookeeper.auth.scheme";
+  public static final String DEFAULT_ACL_SYNC_ZOOKEEPER_AUTH_SCHEME = "x509";
+  public static final String ACL_SYNC_ZOOKEEPER_AUTH_SCHEME_DOC = "ZooKeeper auth scheme of Cruise Control's and the brokers' "
+      + "identities in the znode ACLs: x509 (TLS client certificates; the identity is the certificate subject DN).";
+
+  /**
+   * <code>acl.sync.zookeeper.broker.identities</code>
+   */
+  public static final String ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES_CONFIG = "acl.sync.zookeeper.broker.identities";
+  public static final String DEFAULT_ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES = "";
+  public static final String ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES_DOC = "The brokers' ZooKeeper identities, separated by ';' "
+      + "(certificate DNs contain commas), e.g. O=LocalDev,CN=broker1;O=LocalDev,CN=broker2. Required if "
+      + "acl.sync.zookeeper.acl.enabled is true.";
+
+  /**
+   * <code>acl.sync.notification.retention.ms</code>
+   */
+  public static final String ACL_SYNC_NOTIFICATION_RETENTION_MS_CONFIG = "acl.sync.notification.retention.ms";
+  public static final long DEFAULT_ACL_SYNC_NOTIFICATION_RETENTION_MS = 600_000L;
+  public static final String ACL_SYNC_NOTIFICATION_RETENTION_MS_DOC = "Cruise Control deletes the change notifications it "
+      + "created after this time. Keep it below the brokers' own purge age (15 minutes), so that brokers never need to "
+      + "delete them (they have no delete permission when acl.sync.zookeeper.acl.enabled is true).";
+
   private AclSyncConfig() {
   }
 
@@ -189,6 +226,27 @@ public final class AclSyncConfig {
                             ConfigDef.Type.STRING,
                             DEFAULT_AUTHORIZER_ZOOKEEPER_URL,
                             ConfigDef.Importance.MEDIUM,
-                            AUTHORIZER_ZOOKEEPER_URL_DOC);
+                            AUTHORIZER_ZOOKEEPER_URL_DOC)
+                    .define(ACL_SYNC_ZOOKEEPER_ACL_ENABLED_CONFIG,
+                            ConfigDef.Type.BOOLEAN,
+                            DEFAULT_ACL_SYNC_ZOOKEEPER_ACL_ENABLED,
+                            ConfigDef.Importance.HIGH,
+                            ACL_SYNC_ZOOKEEPER_ACL_ENABLED_DOC)
+                    .define(ACL_SYNC_ZOOKEEPER_AUTH_SCHEME_CONFIG,
+                            ConfigDef.Type.STRING,
+                            DEFAULT_ACL_SYNC_ZOOKEEPER_AUTH_SCHEME,
+                            ConfigDef.Importance.LOW,
+                            ACL_SYNC_ZOOKEEPER_AUTH_SCHEME_DOC)
+                    .define(ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES_CONFIG,
+                            ConfigDef.Type.STRING,
+                            DEFAULT_ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES,
+                            ConfigDef.Importance.MEDIUM,
+                            ACL_SYNC_ZOOKEEPER_BROKER_IDENTITIES_DOC)
+                    .define(ACL_SYNC_NOTIFICATION_RETENTION_MS_CONFIG,
+                            ConfigDef.Type.LONG,
+                            DEFAULT_ACL_SYNC_NOTIFICATION_RETENTION_MS,
+                            atLeast(1000),
+                            ConfigDef.Importance.LOW,
+                            ACL_SYNC_NOTIFICATION_RETENTION_MS_DOC);
   }
 }
