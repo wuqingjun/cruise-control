@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +32,8 @@ import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.client.ZKClientConfig;
 import org.apache.zookeeper.data.ACL;
+import org.apache.zookeeper.data.ClientInfo;
+import org.apache.zookeeper.data.Id;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,7 +64,7 @@ public class AclZkStore implements AutoCloseable {
 
   private final ZooKeeper _zk;
   private final int _maxBatchBytes;
-  private final List<ACL> _nodeAcls;
+  private final AclZnodePolicy _policy;
 
   /** Current ACLs as read from ZooKeeper, with the data nodes' versions. */
   public static final class Snapshot {
@@ -141,13 +144,12 @@ public class AclZkStore implements AutoCloseable {
   /**
    * @param zk ZooKeeper handle connected to the ACL root (chroot included).
    * @param maxBatchBytes Maximum estimated size of one multi request.
-   * @param nodeAcls ZooKeeper ACLs for created nodes (open until ZooKeeper security is enabled).
+   * @param policy ZooKeeper ACLs (znode permissions) for created and existing nodes.
    */
-  public AclZkStore(ZooKeeper zk, int maxBatchBytes, List<ACL> nodeAcls) {
+  public AclZkStore(ZooKeeper zk, int maxBatchBytes, AclZnodePolicy policy) {
     _zk = Objects.requireNonNull(zk, "zk");
     _maxBatchBytes = maxBatchBytes;
-    // Not List.copyOf: ZooKeeper's validateACL calls contains(null), which immutable lists reject with an NPE.
-    _nodeAcls = Collections.unmodifiableList(new ArrayList<>(nodeAcls));
+    _policy = Objects.requireNonNull(policy, "policy");
   }
 
   /**
@@ -155,7 +157,7 @@ public class AclZkStore implements AutoCloseable {
    * @param maxBatchBytes Maximum estimated size of one multi request.
    */
   public AclZkStore(ZooKeeper zk, int maxBatchBytes) {
-    this(zk, maxBatchBytes, ZooDefs.Ids.OPEN_ACL_UNSAFE);
+    this(zk, maxBatchBytes, AclZnodePolicy.open());
   }
 
   /**
@@ -281,7 +283,7 @@ public class AclZkStore implements AutoCloseable {
   public boolean tryLock(String owner) throws KeeperException, InterruptedException {
     ensureStateFolder();
     try {
-      _zk.create(LOCK_NODE, owner.getBytes(StandardCharsets.UTF_8), _nodeAcls, CreateMode.EPHEMERAL);
+      _zk.create(LOCK_NODE, owner.getBytes(StandardCharsets.UTF_8), _policy.ownerOnlyAcls(), CreateMode.EPHEMERAL);
       return true;
     } catch (KeeperException.NodeExistsException e) {
       return false;
@@ -388,7 +390,7 @@ public class AclZkStore implements AutoCloseable {
         ops = new ArrayList<>();
         bytes = 0;
       }
-      ops.add(Op.create(notification.pathPrefix(), data, _nodeAcls, CreateMode.PERSISTENT_SEQUENTIAL));
+      ops.add(Op.create(notification.pathPrefix(), data, _policy.brokerReadAcls(), CreateMode.PERSISTENT_SEQUENTIAL));
       bytes += size;
     }
     if (!ops.isEmpty()) {
@@ -396,6 +398,168 @@ public class AclZkStore implements AutoCloseable {
       created += ops.size();
     }
     return created;
+  }
+
+  /**
+   * @return The znode ACL policy of this store.
+   */
+  public AclZnodePolicy policy() {
+    return _policy;
+  }
+
+  /**
+   * The identity this session is authenticated with in the given scheme (ZooKeeper {@code whoAmI}). For {@code x509}
+   * (TLS client certificate) this is the certificate subject DN, which is also the id used in znode ACLs. (For
+   * {@code digest}, whoAmI returns only the user name, not the {@code user:hash} ACL id, so it can't be used as is.)
+   *
+   * @param scheme Auth scheme, e.g. {@code x509}.
+   * @return The identity, or empty if the session has none in that scheme (e.g. a plaintext connection).
+   * @throws KeeperException On ZooKeeper errors.
+   * @throws InterruptedException If interrupted.
+   */
+  public Optional<Id> authenticatedId(String scheme) throws KeeperException, InterruptedException {
+    return authenticatedId(_zk, scheme);
+  }
+
+  /**
+   * @param zk A connected handle.
+   * @param scheme Auth scheme, e.g. {@code x509}.
+   * @return The identity of the session in that scheme, or empty.
+   * @throws KeeperException On ZooKeeper errors.
+   * @throws InterruptedException If interrupted.
+   */
+  public static Optional<Id> authenticatedId(ZooKeeper zk, String scheme) throws KeeperException, InterruptedException {
+    for (ClientInfo info : zk.whoAmI()) {
+      if (scheme.equals(info.getAuthScheme())) {
+        return Optional.of(new Id(info.getAuthScheme(), info.getUser()));
+      }
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * Make the ZooKeeper ACLs of the ACL subtree match the policy: top folders, resource-type folders, change folders,
+   * resource data nodes, the state folder and state node. Only nodes whose ACLs differ are changed. Nothing is done for
+   * the open policy. Notification nodes are left alone (they are purged).
+   *
+   * @return Number of nodes whose ACLs were changed.
+   * @throws KeeperException On ZooKeeper errors (e.g. no ADMIN permission on a node).
+   * @throws InterruptedException If interrupted.
+   */
+  public int ensureZnodeAcls() throws KeeperException, InterruptedException {
+    if (!_policy.isProtecting()) {
+      return 0;
+    }
+    int changed = 0;
+    for (PatternType patternType : AclTree.PATTERN_TYPES) {
+      String root = KafkaAclZkCodec.rootPath(patternType);
+      // kafka-acl-extended/prefixed: also its parent kafka-acl-extended
+      String parent = root.substring(0, root.lastIndexOf('/'));
+      if (!parent.isEmpty()) {
+        changed += ensureAcls(parent, _policy.topFolderAcls());
+      }
+      changed += ensureAcls(root, _policy.topFolderAcls());
+      for (ResourceType type : KafkaAclZkCodec.resourceTypes()) {
+        String typePath = KafkaAclZkCodec.typePath(patternType, type);
+        changed += ensureAcls(typePath, _policy.brokerReadAcls());
+        List<String> names;
+        try {
+          names = _zk.getChildren(typePath, false);
+        } catch (KeeperException.NoNodeException e) {
+          continue;
+        }
+        for (String name : names) {
+          changed += ensureAcls(typePath + "/" + name, _policy.brokerReadAcls());
+        }
+      }
+      changed += ensureAcls(KafkaAclZkCodec.changeRootPath(patternType), _policy.brokerReadAcls());
+    }
+    changed += ensureAcls(STATE_FOLDER, _policy.ownerOnlyAcls());
+    changed += ensureAcls(STATE_NODE, _policy.ownerOnlyAcls());
+    return changed;
+  }
+
+  /**
+   * @param path Node.
+   * @param wanted ACLs it should have.
+   * @return 1 if changed, 0 if already right or the node doesn't exist.
+   */
+  private int ensureAcls(String path, List<ACL> wanted) throws KeeperException, InterruptedException {
+    Stat stat = new Stat();
+    List<ACL> current;
+    try {
+      current = _zk.getACL(path, stat);
+    } catch (KeeperException.NoNodeException e) {
+      return 0;
+    }
+    if (new HashSet<>(current).equals(new HashSet<>(wanted))) {
+      return 0;
+    }
+    try {
+      _zk.setACL(path, wanted, stat.getAversion());
+    } catch (KeeperException.NoNodeException e) {
+      return 0;
+    }
+    LOG.info("ZooKeeper ACLs of {} set to {} (were {}).", path, describe(wanted), describe(current));
+    return 1;
+  }
+
+  private static String describe(List<ACL> acls) {
+    List<String> parts = new ArrayList<>();
+    for (ACL acl : acls) {
+      parts.add(String.format("%s:%s:%s", acl.getId().getScheme(), acl.getId().getId(), permissions(acl.getPerms())));
+    }
+    return parts.toString();
+  }
+
+  private static String permissions(int perms) {
+    StringBuilder sb = new StringBuilder();
+    sb.append((perms & ZooDefs.Perms.CREATE) != 0 ? "c" : "");
+    sb.append((perms & ZooDefs.Perms.DELETE) != 0 ? "d" : "");
+    sb.append((perms & ZooDefs.Perms.READ) != 0 ? "r" : "");
+    sb.append((perms & ZooDefs.Perms.WRITE) != 0 ? "w" : "");
+    sb.append((perms & ZooDefs.Perms.ADMIN) != 0 ? "a" : "");
+    return sb.toString();
+  }
+
+  /**
+   * Delete change notifications older than the retention. Cruise Control is the only creator of notifications, so it
+   * also removes them (brokers have no DELETE permission when the subtree is protected). Keep the retention below the
+   * brokers' own purge age (15 minutes) so that their purge never finds an expired node.
+   *
+   * @param retentionMs Minimum age before a notification is deleted.
+   * @param nowMs Current time.
+   * @return Number of notifications deleted.
+   * @throws KeeperException On ZooKeeper errors.
+   * @throws InterruptedException If interrupted.
+   */
+  public int purgeNotifications(long retentionMs, long nowMs) throws KeeperException, InterruptedException {
+    int deleted = 0;
+    for (PatternType patternType : AclTree.PATTERN_TYPES) {
+      String changeRoot = KafkaAclZkCodec.changeRootPath(patternType);
+      List<String> children;
+      try {
+        children = _zk.getChildren(changeRoot, false);
+      } catch (KeeperException.NoNodeException e) {
+        continue;
+      }
+      for (String child : children) {
+        String path = changeRoot + "/" + child;
+        Stat stat = _zk.exists(path, false);
+        if (stat != null && nowMs - stat.getCtime() > retentionMs) {
+          try {
+            _zk.delete(path, -1);
+            deleted++;
+          } catch (KeeperException.NoNodeException e) {
+            LOG.debug("{} already purged.", path);
+          }
+        }
+      }
+    }
+    if (deleted > 0) {
+      LOG.debug("Purged {} change notification(s) older than {} ms.", deleted, retentionMs);
+    }
+    return deleted;
   }
 
   /**
@@ -455,11 +619,11 @@ public class AclZkStore implements AutoCloseable {
         // UPDATED, or ADDED over an existing node without entries
         dataOp = Op.setData(path, data, version.get());
       } else {
-        dataOp = Op.create(path, data, _nodeAcls, CreateMode.PERSISTENT);
+        dataOp = Op.create(path, data, _policy.brokerReadAcls(), CreateMode.PERSISTENT);
       }
       KafkaAclZkCodec.ChangeNode notification = KafkaAclZkCodec.changeNode(pattern);
       byte[] notificationData = notification.data();
-      Op notificationOp = Op.create(notification.pathPrefix(), notificationData, _nodeAcls, CreateMode.PERSISTENT_SEQUENTIAL);
+      Op notificationOp = Op.create(notification.pathPrefix(), notificationData, _policy.brokerReadAcls(), CreateMode.PERSISTENT_SEQUENTIAL);
       int bytes = estimate(path, data) + estimate(notification.pathPrefix(), notificationData);
       if (bytes > _maxBatchBytes) {
         throw new IllegalArgumentException(String.format("%s alone needs about %d bytes, more than the batch limit %d.",
@@ -473,7 +637,7 @@ public class AclZkStore implements AutoCloseable {
     }
     byte[] stateBytes = state.toBytes();
     Op stateOp = stateVersion.isPresent() ? Op.setData(STATE_NODE, stateBytes, stateVersion.get())
-                                          : Op.create(STATE_NODE, stateBytes, _nodeAcls, CreateMode.PERSISTENT);
+                                          : Op.create(STATE_NODE, stateBytes, _policy.ownerOnlyAcls(), CreateMode.PERSISTENT);
     int stateBytesEstimate = estimate(STATE_NODE, stateBytes);
     if (batch.bytes() + stateBytesEstimate > _maxBatchBytes && !batch.ops().isEmpty()) {
       batches.add(batch);
@@ -506,7 +670,7 @@ public class AclZkStore implements AutoCloseable {
   private void ensureStateFolder() throws KeeperException, InterruptedException {
     if (_zk.exists(STATE_FOLDER, false) == null) {
       try {
-        _zk.create(STATE_FOLDER, new byte[0], _nodeAcls, CreateMode.PERSISTENT);
+        _zk.create(STATE_FOLDER, new byte[0], _policy.ownerOnlyAcls(), CreateMode.PERSISTENT);
       } catch (KeeperException.NodeExistsException e) {
         LOG.debug("{} created concurrently.", STATE_FOLDER);
       }
@@ -519,7 +683,10 @@ public class AclZkStore implements AutoCloseable {
     }
   }
 
-  private static void closeQuietly(ZooKeeper zk) {
+  /**
+   * @param zk Handle to close; an interrupt is kept as the thread's interrupt flag.
+   */
+  static void closeQuietly(ZooKeeper zk) {
     try {
       zk.close();
     } catch (InterruptedException e) {
