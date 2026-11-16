@@ -7,6 +7,7 @@ package com.linkedin.kafka.cruisecontrol;
 import com.codahale.metrics.MetricRegistry;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
 import com.linkedin.cruisecontrol.exception.NotEnoughValidWindowsException;
+import com.linkedin.kafka.cruisecontrol.acl.AclSyncManager;
 import com.linkedin.kafka.cruisecontrol.analyzer.AnalyzerState;
 import com.linkedin.kafka.cruisecontrol.analyzer.OptimizationOptions;
 import com.linkedin.kafka.cruisecontrol.analyzer.OptimizerResult;
@@ -18,6 +19,7 @@ import com.linkedin.kafka.cruisecontrol.common.MetadataClient;
 import com.linkedin.kafka.cruisecontrol.config.BrokerSetResolver;
 import com.linkedin.kafka.cruisecontrol.config.KafkaCruiseControlConfig;
 import com.linkedin.kafka.cruisecontrol.config.TopicConfigProvider;
+import com.linkedin.kafka.cruisecontrol.config.constants.AclSyncConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.AnomalyDetectorConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.ExecutorConfig;
 import com.linkedin.kafka.cruisecontrol.detector.AnomalyDetectorManager;
@@ -86,6 +88,8 @@ public class KafkaCruiseControl {
   private final Time _time;
   private final AdminClient _adminClient;
   private final Provisioner _provisioner;
+  /** Null unless acl.sync.enabled=true. */
+  private final AclSyncManager _aclSyncManager;
 
   private static final String VERSION;
   private static final String COMMIT_ID;
@@ -126,6 +130,10 @@ public class KafkaCruiseControl {
     _loadMonitor = new LoadMonitor(config, _time, dropwizardMetricRegistry, KafkaMetricDef.commonMetricDef());
     _goalOptimizerExecutor = Executors.newSingleThreadExecutor(new KafkaCruiseControlThreadFactory("GoalOptimizerExecutor"));
     _goalOptimizer = new GoalOptimizer(config, _loadMonitor, _time, dropwizardMetricRegistry, _executor, _adminClient);
+    _aclSyncManager = config.getBoolean(AclSyncConfig.ACL_SYNC_ENABLED_CONFIG)
+                      ? AclSyncManager.create(config, _adminClient, dropwizardMetricRegistry,
+                                              drift -> _anomalyDetectorManager.reportAclDrift(drift, _time.milliseconds()), _time)
+                      : null;
   }
 
   /**
@@ -148,6 +156,7 @@ public class KafkaCruiseControl {
     _goalOptimizerExecutor = goalOptimizerExecutor;
     _goalOptimizer = goalOptimizer;
     _provisioner = provisioner;
+    _aclSyncManager = null;
   }
 
   /**
@@ -223,6 +232,9 @@ public class KafkaCruiseControl {
     _loadMonitor.startUp();
     _anomalyDetectorManager.startDetection();
     _goalOptimizerExecutor.execute(_goalOptimizer);
+    if (_aclSyncManager != null) {
+      _aclSyncManager.start();
+    }
     LOG.info("Kafka Cruise Control started.");
   }
 
@@ -236,6 +248,9 @@ public class KafkaCruiseControl {
       _executor.shutdown();
       _anomalyDetectorManager.shutdown();
       _goalOptimizer.shutdown();
+      if (_aclSyncManager != null) {
+        _aclSyncManager.shutdown();
+      }
       closeAdminClientWithTimeout(_adminClient);
       LOG.info("Kafka Cruise Control shutdown completed.");
     });

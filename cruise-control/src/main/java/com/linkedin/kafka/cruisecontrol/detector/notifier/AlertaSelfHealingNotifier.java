@@ -7,6 +7,7 @@ package com.linkedin.kafka.cruisecontrol.detector.notifier;
 import com.linkedin.cruisecontrol.CruiseControlUtils;
 import com.linkedin.cruisecontrol.detector.Anomaly;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
+import com.linkedin.kafka.cruisecontrol.detector.AclDriftAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.BrokerFailures;
 import com.linkedin.kafka.cruisecontrol.detector.DiskFailures;
 import com.linkedin.kafka.cruisecontrol.detector.GoalViolations;
@@ -132,6 +133,15 @@ public class AlertaSelfHealingNotifier extends SelfHealingNotifier {
       case MAINTENANCE_EVENT:
         MaintenanceEvent maintenanceEvent = (MaintenanceEvent) anomaly;
         alertMaintenanceEvent(anomalyType, localHostname, alertaMessages, maintenanceEvent);
+        break;
+      case ACL_DRIFT:
+        AclDriftAnomaly aclDrift = (AclDriftAnomaly) anomaly;
+        AlertaMessage aclDriftMessage = new AlertaMessage(localHostname, anomalyType + " - " + aclDrift.drift().sha256());
+        aclDriftMessage.setSeverity(NotifierUtils.getAlertSeverity(anomalyType).toString());
+        aclDriftMessage.setGroup(AlertaAlertGroup.SECURITY.toString());
+        aclDriftMessage.setValue(aclDrift.toString());
+        aclDriftMessage.setCreateTime(CruiseControlUtils.utcDateFor(aclDrift.detectionTimeMs(), 3, ChronoUnit.SECONDS));
+        alertaMessages.add(aclDriftMessage);
         break;
       default:
         throw new IllegalStateException("Unrecognized anomaly type.");

@@ -6,6 +6,7 @@ package com.linkedin.kafka.cruisecontrol.detector.notifier;
 
 import com.linkedin.cruisecontrol.common.CruiseControlConfigurable;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
+import com.linkedin.kafka.cruisecontrol.detector.AclDriftAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.BrokerFailures;
 import com.linkedin.kafka.cruisecontrol.detector.DiskFailures;
 import com.linkedin.kafka.cruisecontrol.detector.GoalViolations;
@@ -66,6 +67,17 @@ public interface AnomalyNotifier extends CruiseControlConfigurable {
    * {@link com.linkedin.kafka.cruisecontrol.detector.notifier.AnomalyNotificationResult.Action}.
    */
   AnomalyNotificationResult onMaintenanceEvent(MaintenanceEvent maintenanceEvent);
+
+  /**
+   * This method is called when ACL sync finds ACL drift. ACL sync repairs drift itself (if configured), so this is for
+   * alerting only. A default method, so existing and custom notifiers keep compiling.
+   *
+   * @param aclDrift the detected ACL drift.
+   * @return The notification result; anything but ignore is treated as ignore, because there is no self-healing fix.
+   */
+  default AnomalyNotificationResult onAclDrift(AclDriftAnomaly aclDrift) {
+    return AnomalyNotificationResult.ignore();
+  }
 
   /**
    * This method is called when a disk failure is detected.

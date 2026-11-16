@@ -24,6 +24,8 @@ import java.util.List;
  *  <li>{@link #METRIC_ANOMALY}: Abnormal changes in broker metrics.</li>
  *  <li>{@link #GOAL_VIOLATION}: Violation of anomaly detection goals.</li>
  *  <li>{@link #TOPIC_ANOMALY}: Topic violating some desired properties.</li>
+ *  <li>{@link #ACL_DRIFT}: ACLs in ZooKeeper or on the brokers differ from the deployed ACL file (reported by ACL sync;
+ *      alert only, repaired by ACL sync itself, never by self-healing).</li>
  * </ul>
  */
 public enum KafkaAnomalyType implements AnomalyType {
@@ -38,7 +40,9 @@ public enum KafkaAnomalyType implements AnomalyType {
   @JsonResponseField
   GOAL_VIOLATION(4),
   @JsonResponseField
-  TOPIC_ANOMALY(5);
+  TOPIC_ANOMALY(5),
+  @JsonResponseField
+  ACL_DRIFT(6);
 
   private static final List<KafkaAnomalyType> CACHED_VALUES = List.of(values());
   private final int _priority;
