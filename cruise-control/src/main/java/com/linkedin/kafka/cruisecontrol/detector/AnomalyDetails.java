@@ -110,6 +110,9 @@ public class AnomalyDetails {
           anomalyDetails.put(OPTIMIZATION_RESULT, maintenanceEvent.optimizationResult(_isJson));
         }
         break;
+      case ACL_DRIFT:
+        anomalyDetails.put(DESCRIPTION, _anomalyState.anomaly().toString());
+        break;
       default:
         throw new IllegalStateException("Unrecognized anomaly type " + _anomalyType);
     }

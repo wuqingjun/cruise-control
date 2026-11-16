@@ -8,6 +8,7 @@ import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.linkedin.cruisecontrol.detector.Anomaly;
+import com.linkedin.kafka.cruisecontrol.acl.AclDrift;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
 import com.linkedin.cruisecontrol.detector.metricanomaly.MetricAnomalyType;
 import com.linkedin.kafka.cruisecontrol.KafkaCruiseControl;
@@ -187,7 +188,7 @@ public class AnomalyDetectorManager {
     for (KafkaAnomalyType anomalyType : KafkaAnomalyType.cachedValues()) {
       dropwizardMetricRegistry.register(MetricRegistry.name(ANOMALY_DETECTOR_SENSOR,
                                                             String.format("%s-self-healing-enabled", anomalyType.toString().toLowerCase())),
-                                        (Gauge<Integer>) () -> _anomalyNotifier.selfHealingEnabled().get(anomalyType) ? 1 : 0);
+                                        (Gauge<Integer>) () -> Boolean.TRUE.equals(_anomalyNotifier.selfHealingEnabled().get(anomalyType)) ? 1 : 0);
     }
 
     // The cluster is identified as under-provisioned, over-provisioned, or right-sized (undecided not reported).
@@ -306,6 +307,16 @@ public class AnomalyDetectorManager {
    */
   public void resetHasUnfixableGoals() {
     _anomalyDetectorState.resetHasUnfixableGoals();
+  }
+
+  /**
+   * Report ACL drift found by ACL sync, so the configured notifier alerts (anomaly type {@link KafkaAnomalyType#ACL_DRIFT}).
+   *
+   * @param drift What ACL sync found.
+   * @param detectionTimeMs When it was found.
+   */
+  public void reportAclDrift(AclDrift drift, long detectionTimeMs) {
+    _anomalies.add(AclDriftAnomaly.of(drift, detectionTimeMs));
   }
 
   /**
@@ -461,6 +472,14 @@ public class AnomalyDetectorManager {
         case MAINTENANCE_EVENT:
           MaintenanceEvent maintenanceEvent = (MaintenanceEvent) _anomalyInProgress;
           notificationResult = _anomalyNotifier.onMaintenanceEvent(maintenanceEvent);
+          break;
+        case ACL_DRIFT:
+          // Alert only: ACL sync repairs drift itself; a FIX from a custom notifier would clear the anomaly queue for nothing.
+          AnomalyNotificationResult aclDriftResult = _anomalyNotifier.onAclDrift((AclDriftAnomaly) _anomalyInProgress);
+          if (aclDriftResult != null && aclDriftResult.action() != AnomalyNotificationResult.Action.IGNORE) {
+            LOG.warn("Notifier returned {} for {}; treated as IGNORE.", aclDriftResult.action(), ACL_DRIFT);
+          }
+          notificationResult = AnomalyNotificationResult.ignore();
           break;
         default:
           throw new IllegalStateException("Unrecognized anomaly type.");

@@ -14,6 +14,7 @@ import com.linkedin.kafka.cruisecontrol.common.KafkaCruiseControlThreadFactory;
 import com.linkedin.kafka.cruisecontrol.common.TestConstants;
 import com.linkedin.kafka.cruisecontrol.config.KafkaCruiseControlConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.AnomalyDetectorConfig;
+import com.linkedin.kafka.cruisecontrol.acl.AclDrift;
 import com.linkedin.kafka.cruisecontrol.detector.notifier.AnomalyNotificationResult;
 import com.linkedin.kafka.cruisecontrol.detector.notifier.AnomalyNotifier;
 import com.linkedin.kafka.cruisecontrol.detector.notifier.KafkaAnomalyType;
@@ -28,6 +29,7 @@ import com.linkedin.kafka.cruisecontrol.servlet.response.stats.BrokerStats;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -577,6 +579,63 @@ public class AnomalyDetectorManagerTest {
     EasyMock.verify(mockAnomalyNotifier, mockDetectorScheduler, mockKafkaCruiseControl, mockBrokerFailureDetector,
                     mockGoalViolationDetector, mockMetricAnomalyDetector, mockTopicAnomalyDetector, mockMaintenanceEventDetector,
                     mockDiskFailureDetector);
+  }
+
+  /**
+   * ACL drift reported by ACL sync reaches the notifier even while an execution (rebalance) is in progress, is recorded in
+   * the anomaly detector state, and never starts self-healing (a FIX from the notifier is treated as IGNORE).
+   *
+   * @throws InterruptedException If interrupted.
+   */
+  @Test
+  public void testAclDriftAlertedDuringExecution() throws InterruptedException {
+    PriorityBlockingQueue<Anomaly> anomalies = new PriorityBlockingQueue<>(ANOMALY_DETECTOR_INITIAL_QUEUE_SIZE,
+                                                                           anomalyComparator());
+    AnomalyNotifier mockAnomalyNotifier = EasyMock.mock(AnomalyNotifier.class);
+    AbstractBrokerFailureDetector mockBrokerFailureDetector = EasyMock.createNiceMock(ZKBrokerFailureDetector.class);
+    GoalViolationDetector mockGoalViolationDetector = EasyMock.createNiceMock(GoalViolationDetector.class);
+    MetricAnomalyDetector mockMetricAnomalyDetector = EasyMock.createNiceMock(MetricAnomalyDetector.class);
+    TopicAnomalyDetector mockTopicAnomalyDetector = EasyMock.createNiceMock(TopicAnomalyDetector.class);
+    MaintenanceEventDetector mockMaintenanceEventDetector = EasyMock.createNiceMock(MaintenanceEventDetector.class);
+    DiskFailureDetector mockDiskFailureDetector = EasyMock.createNiceMock(DiskFailureDetector.class);
+    ScheduledExecutorService mockDetectorScheduler = EasyMock.mock(ScheduledExecutorService.class);
+    ScheduledExecutorService executorService = Executors.newSingleThreadScheduledExecutor();
+    KafkaCruiseControl mockKafkaCruiseControl = EasyMock.mock(KafkaCruiseControl.class);
+
+    startRunnableDetectors(mockDetectorScheduler, mockGoalViolationDetector, mockMetricAnomalyDetector, mockDiskFailureDetector,
+                           mockBrokerFailureDetector, mockTopicAnomalyDetector, mockMaintenanceEventDetector, executorService);
+    shutdownDetector(mockDetectorScheduler, executorService);
+    EasyMock.expect(mockKafkaCruiseControl.executionState())
+            .andReturn(ExecutorState.State.INTER_BROKER_REPLICA_MOVEMENT_TASK_IN_PROGRESS);
+    EasyMock.expect(mockAnomalyNotifier.onAclDrift(EasyMock.isA(AclDriftAnomaly.class))).andReturn(AnomalyNotificationResult.fix());
+    EasyMock.expect(mockAnomalyNotifier.selfHealingEnabledRatio()).andReturn(MOCK_SELF_HEALING_ENABLED_RATIO);
+
+    replayCommonMocks(mockAnomalyNotifier, mockBrokerFailureDetector, mockGoalViolationDetector, mockMetricAnomalyDetector,
+                      mockTopicAnomalyDetector, mockMaintenanceEventDetector, mockDiskFailureDetector, mockDetectorScheduler,
+                      mockKafkaCruiseControl);
+
+    AnomalyDetectorManager anomalyDetectorManager
+        = new AnomalyDetectorManager(anomalies, MOCK_ANOMALY_DETECTION_INTERVAL_MS, mockKafkaCruiseControl,
+                                     mockAnomalyNotifier, mockGoalViolationDetector, mockBrokerFailureDetector,
+                                     mockMetricAnomalyDetector, mockDiskFailureDetector, mockTopicAnomalyDetector,
+                                     mockMaintenanceEventDetector, mockDetectorScheduler);
+    try {
+      anomalyDetectorManager.startDetection();
+      anomalyDetectorManager.reportAclDrift(new AclDrift("ab12", List.of(), List.of(), true), 100L);
+      while (!anomalies.isEmpty()) {
+        // Just wait for the anomalies to be drained.
+      }
+      anomalyDetectorManager.shutdown();
+      assertTrue(executorService.awaitTermination(MOCK_ANOMALY_DETECTOR_SHUTDOWN_MS, TimeUnit.MILLISECONDS));
+      assertEquals(0, anomalyDetectorManager.numSelfHealingStarted());
+      Map<String, AnomalyState> aclDrifts = anomalyDetectorManager.anomalyDetectorState().recentAnomaliesByType()
+                                                                  .get(KafkaAnomalyType.ACL_DRIFT);
+      assertEquals(1, aclDrifts.size());
+      assertEquals(AnomalyState.Status.IGNORED, aclDrifts.values().iterator().next().status());
+    } finally {
+      executorService.shutdown();
+    }
+    EasyMock.verify(mockAnomalyNotifier, mockDetectorScheduler, mockKafkaCruiseControl);
   }
 
   @Test
