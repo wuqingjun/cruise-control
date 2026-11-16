@@ -152,6 +152,16 @@ public final class AclSyncConfig {
       + "created after this time. Keep it below the brokers' own purge age (15 minutes), so that brokers never need to "
       + "delete them (they have no delete permission when acl.sync.zookeeper.acl.enabled is true).";
 
+  /**
+   * <code>acl.sync.verify.mode</code>
+   */
+  public static final String ACL_SYNC_VERIFY_MODE_CONFIG = "acl.sync.verify.mode";
+  public static final String DEFAULT_ACL_SYNC_VERIFY_MODE = "PER_BROKER";
+  public static final String ACL_SYNC_VERIFY_MODE_DOC = "How the brokers' ACLs are compared with ZooKeeper after an apply and "
+      + "by the drift check. PER_BROKER: every live broker is asked (describeCluster, then a DescribeAcls request to each "
+      + "broker); a stale or unreachable broker is reported by id. ANY_BROKER: one describeAcls through the admin client, "
+      + "answered by a broker the admin client chooses.";
+
   private AclSyncConfig() {
   }
 
@@ -247,6 +257,12 @@ public final class AclSyncConfig {
                             DEFAULT_ACL_SYNC_NOTIFICATION_RETENTION_MS,
                             atLeast(1000),
                             ConfigDef.Importance.LOW,
-                            ACL_SYNC_NOTIFICATION_RETENTION_MS_DOC);
+                            ACL_SYNC_NOTIFICATION_RETENTION_MS_DOC)
+                    .define(ACL_SYNC_VERIFY_MODE_CONFIG,
+                            ConfigDef.Type.STRING,
+                            DEFAULT_ACL_SYNC_VERIFY_MODE,
+                            ConfigDef.ValidString.in("PER_BROKER", "ANY_BROKER"),
+                            ConfigDef.Importance.LOW,
+                            ACL_SYNC_VERIFY_MODE_DOC);
   }
 }

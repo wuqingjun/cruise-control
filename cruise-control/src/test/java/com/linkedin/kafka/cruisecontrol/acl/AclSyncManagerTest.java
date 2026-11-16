@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,13 +71,13 @@ public class AclSyncManagerTest {
 
   /** Verifier returning queued answers (default: brokers match). */
   private static final class FakeVerifier implements AclSyncVerifier {
-    private final Deque<List<ResourcePattern>> _answers = new ArrayDeque<>();
+    private final Deque<AclVerifyResult> _answers = new ArrayDeque<>();
     private final List<AclTree> _expected = new ArrayList<>();
 
     @Override
-    public List<ResourcePattern> verify(AclTree expected, long timeoutMs) {
+    public AclVerifyResult verify(AclTree expected, long timeoutMs) {
       _expected.add(expected);
-      return _answers.isEmpty() ? List.of() : _answers.poll();
+      return _answers.isEmpty() ? AclVerifyResult.ok() : _answers.poll();
     }
   }
 
@@ -353,9 +354,10 @@ public class AclSyncManagerTest {
   public void testVerifyFailure() throws Exception {
     deploy(file("orders", "alice"));
     AclSyncManager manager = manager(true);
-    _verifier._answers.add(List.of(topic("orders")));
+    _verifier._answers.add(AclVerifyResult.of(Map.of(2, List.of(topic("orders"))), Map.of(3, "Connection refused")));
     assertEquals(Outcome.VERIFY_FAILED, manager.checkFile());
-    assertTrue(manager.lastError(), manager.lastError().contains("kafka-acl/Topic/orders"));
+    assertTrue(manager.lastError(), manager.lastError().contains("broker 2: [kafka-acl/Topic/orders]"));
+    assertTrue(manager.lastError(), manager.lastError().contains("broker 3 unreachable (Connection refused)"));
     // ZooKeeper has the file: the next file check has nothing to do, the drift check looks at the brokers again
     assertEquals(Outcome.UNCHANGED, manager.checkFile());
     assertEquals(Outcome.IN_SYNC, manager.checkDrift());
@@ -392,9 +394,11 @@ public class AclSyncManagerTest {
     int before = notificationCount();
 
     // ZooKeeper matches the file, but the brokers serve something else for 'payments'
-    _verifier._answers.add(List.of(topic("payments")));
+    _verifier._answers.add(AclVerifyResult.of(Map.of(2, List.of(topic("payments"))), Map.of()));
     assertEquals(Outcome.DRIFT_REAPPLIED, manager.checkDrift());
     assertEquals(List.of(topic("payments")), _drifts.get(0).brokerDifferences());
+    assertEquals(Map.of(2, List.of(topic("payments"))), _drifts.get(0).brokers().differencesByBroker());
+    assertTrue(_drifts.get(0).toString(), _drifts.get(0).toString().contains("broker 2: [kafka-acl/Topic/payments]"));
     assertEquals(before + 1, notificationCount());
     String sha = zkState().sha256();
     assertEquals(AclFileReader.sha256(Files.readAllBytes(_aclFile)), sha);

@@ -273,7 +273,7 @@ public class AclZnodeProtectionTest {
     Path file = Files.createTempDirectory("acl-zk").resolve("acls.json");
     Files.writeString(file, AclTestFiles.oneTopic(AclTestFiles.entry("Claim:a", "Allow", "*", "Read")));
     AclSyncManager manager = new AclSyncManager(settings, new AclFileReader(file, null, null, false), () -> _store,
-                                                (expected, timeoutMs) -> List.of(), AclDriftListener.LOG_ONLY, Time.SYSTEM);
+                                                (expected, timeoutMs) -> AclVerifyResult.ok(), AclDriftListener.LOG_ONLY, Time.SYSTEM);
     assertEquals(AclSyncManager.Outcome.APPLIED, manager.checkFile());
     // the legacy node (unmanaged) got the protected ACLs too
     assertEquals(3, acls(_cc, KafkaAclZkCodec.dataPath(LEGACY)).size());
