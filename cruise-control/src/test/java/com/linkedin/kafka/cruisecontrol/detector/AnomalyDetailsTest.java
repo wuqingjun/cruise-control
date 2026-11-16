@@ -79,6 +79,10 @@ public class AnomalyDetailsTest {
           // toString() is built into EasyMock class mocks (see above).
           replayAndVerify(mockAnomalyState, details, aclDrift);
           break;
+        case QUOTA_DRIFT:
+          QuotaDriftAnomaly quotaDrift = EasyMock.mock(QuotaDriftAnomaly.class);
+          replayAndVerify(mockAnomalyState, details, quotaDrift);
+          break;
         default:
           throw new IllegalStateException("Unrecognized anomaly type " + anomalyType);
       }

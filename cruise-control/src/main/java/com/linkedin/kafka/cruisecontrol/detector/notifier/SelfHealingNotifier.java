@@ -12,6 +12,7 @@ import com.linkedin.kafka.cruisecontrol.detector.DiskFailures;
 import com.linkedin.kafka.cruisecontrol.detector.GoalViolations;
 import com.linkedin.kafka.cruisecontrol.detector.KafkaMetricAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.MaintenanceEvent;
+import com.linkedin.kafka.cruisecontrol.detector.QuotaDriftAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.TopicAnomaly;
 import java.util.Collections;
 import java.util.HashMap;
@@ -158,6 +159,18 @@ public class SelfHealingNotifier implements AnomalyNotifier {
   @Override
   public AnomalyNotificationResult onAclDrift(AclDriftAnomaly aclDrift) {
     alert(aclDrift, false, _time.milliseconds(), KafkaAnomalyType.ACL_DRIFT);
+    return AnomalyNotificationResult.ignore();
+  }
+
+  /**
+   * Alert only: quota sync has already re-applied the quota file if {@code quota.sync.drift.action=REAPPLY}.
+   *
+   * @param quotaDrift the detected quota drift.
+   * @return Ignore.
+   */
+  @Override
+  public AnomalyNotificationResult onQuotaDrift(QuotaDriftAnomaly quotaDrift) {
+    alert(quotaDrift, false, _time.milliseconds(), KafkaAnomalyType.QUOTA_DRIFT);
     return AnomalyNotificationResult.ignore();
   }
 
@@ -368,6 +381,8 @@ public class SelfHealingNotifier implements AnomalyNotifier {
                                                                 : Boolean.parseBoolean(selfHealingMaintenanceEventEnabledString));
     // ACL drift is repaired by ACL sync itself (acl.sync.drift.action), never by self-healing.
     _selfHealingEnabled.put(KafkaAnomalyType.ACL_DRIFT, false);
+    // Quota drift is repaired by quota sync itself (quota.sync.drift.action), never by self-healing.
+    _selfHealingEnabled.put(KafkaAnomalyType.QUOTA_DRIFT, false);
     // Set self-healing current state start time.
     _selfHealingEnabled.forEach((key, value) -> _selfHealingStateChangeTimeMs.get(value).put(key, _notifierStartTimeMs));
   }
