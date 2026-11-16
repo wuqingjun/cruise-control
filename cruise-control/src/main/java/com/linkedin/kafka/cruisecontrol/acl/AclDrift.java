@@ -17,20 +17,30 @@ import org.apache.kafka.common.resource.ResourcePattern;
 public final class AclDrift {
   private final String _sha256;
   private final List<ResourceChange> _zkChanges;
-  private final List<ResourcePattern> _brokerDifferences;
+  private final AclVerifyResult _brokers;
   private final boolean _reapplied;
 
   /**
    * @param sha256 Hash of the approved file.
    * @param zkChanges What it takes to bring ZooKeeper back to the file (current = ZooKeeper, desired = file).
-   * @param brokerDifferences Resources the brokers report differently from ZooKeeper.
+   * @param brokers Per broker, the resources it serves differently from ZooKeeper, and brokers that couldn't be asked.
    * @param reapplied Whether Cruise Control repaired it ({@code acl.sync.drift.action=REAPPLY}).
    */
-  public AclDrift(String sha256, List<ResourceChange> zkChanges, List<ResourcePattern> brokerDifferences, boolean reapplied) {
+  public AclDrift(String sha256, List<ResourceChange> zkChanges, AclVerifyResult brokers, boolean reapplied) {
     _sha256 = sha256;
     _zkChanges = Collections.unmodifiableList(new ArrayList<>(zkChanges));
-    _brokerDifferences = Collections.unmodifiableList(new ArrayList<>(brokerDifferences));
+    _brokers = brokers;
     _reapplied = reapplied;
+  }
+
+  /**
+   * @param sha256 Hash of the approved file.
+   * @param zkChanges What it takes to bring ZooKeeper back to the file.
+   * @param brokerDifferences Resources a broker (not identified) reports differently from ZooKeeper.
+   * @param reapplied Whether Cruise Control repaired it.
+   */
+  public AclDrift(String sha256, List<ResourceChange> zkChanges, List<ResourcePattern> brokerDifferences, boolean reapplied) {
+    this(sha256, zkChanges, AclVerifyResult.anyBroker(brokerDifferences), reapplied);
   }
 
   /**
@@ -51,7 +61,14 @@ public final class AclDrift {
    * @return Resources the brokers report differently from ZooKeeper.
    */
   public List<ResourcePattern> brokerDifferences() {
-    return _brokerDifferences;
+    return _brokers.resources();
+  }
+
+  /**
+   * @return Per broker, what it serves differently from ZooKeeper, and brokers that couldn't be asked.
+   */
+  public AclVerifyResult brokers() {
+    return _brokers;
   }
 
   /**
@@ -65,9 +82,7 @@ public final class AclDrift {
   public String toString() {
     List<String> zk = new ArrayList<>();
     _zkChanges.forEach(c -> zk.add(c.type() + " " + AclTreeParser.location(c.pattern())));
-    List<String> brokers = new ArrayList<>();
-    _brokerDifferences.forEach(p -> brokers.add(AclTreeParser.location(p)));
-    return String.format("ACL drift (file sha256 %s, %s): ZooKeeper vs file %s; brokers vs ZooKeeper %s", _sha256,
-                         _reapplied ? "re-applied" : "reported only", zk, brokers);
+    return String.format("ACL drift (file sha256 %s, %s): ZooKeeper vs file %s; brokers vs ZooKeeper: %s", _sha256,
+                         _reapplied ? "re-applied" : "reported only", zk, _brokers.describe());
   }
 }
