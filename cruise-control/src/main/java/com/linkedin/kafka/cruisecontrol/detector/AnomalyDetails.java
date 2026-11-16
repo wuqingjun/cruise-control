@@ -111,6 +111,7 @@ public class AnomalyDetails {
         }
         break;
       case ACL_DRIFT:
+      case QUOTA_DRIFT:
         anomalyDetails.put(DESCRIPTION, _anomalyState.anomaly().toString());
         break;
       default:

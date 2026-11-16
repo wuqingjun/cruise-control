@@ -26,6 +26,7 @@ import java.util.List;
  *  <li>{@link #TOPIC_ANOMALY}: Topic violating some desired properties.</li>
  *  <li>{@link #ACL_DRIFT}: ACLs in ZooKeeper or on the brokers differ from the deployed ACL file (reported by ACL sync;
  *      alert only, repaired by ACL sync itself, never by self-healing).</li>
+ *  <li>{@link #QUOTA_DRIFT}: client quotas differ from the deployed quota file (reported by quota sync; alert only).</li>
  * </ul>
  */
 public enum KafkaAnomalyType implements AnomalyType {
@@ -42,7 +43,9 @@ public enum KafkaAnomalyType implements AnomalyType {
   @JsonResponseField
   TOPIC_ANOMALY(5),
   @JsonResponseField
-  ACL_DRIFT(6);
+  ACL_DRIFT(6),
+  @JsonResponseField
+  QUOTA_DRIFT(7);
 
   private static final List<KafkaAnomalyType> CACHED_VALUES = List.of(values());
   private final int _priority;

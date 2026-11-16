@@ -8,6 +8,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
 import com.linkedin.cruisecontrol.exception.NotEnoughValidWindowsException;
 import com.linkedin.kafka.cruisecontrol.acl.AclSyncManager;
+import com.linkedin.kafka.cruisecontrol.quota.QuotaSyncManager;
 import com.linkedin.kafka.cruisecontrol.analyzer.AnalyzerState;
 import com.linkedin.kafka.cruisecontrol.analyzer.OptimizationOptions;
 import com.linkedin.kafka.cruisecontrol.analyzer.OptimizerResult;
@@ -20,6 +21,7 @@ import com.linkedin.kafka.cruisecontrol.config.BrokerSetResolver;
 import com.linkedin.kafka.cruisecontrol.config.KafkaCruiseControlConfig;
 import com.linkedin.kafka.cruisecontrol.config.TopicConfigProvider;
 import com.linkedin.kafka.cruisecontrol.config.constants.AclSyncConfig;
+import com.linkedin.kafka.cruisecontrol.config.constants.QuotaSyncConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.AnomalyDetectorConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.ExecutorConfig;
 import com.linkedin.kafka.cruisecontrol.detector.AnomalyDetectorManager;
@@ -90,6 +92,8 @@ public class KafkaCruiseControl {
   private final Provisioner _provisioner;
   /** Null unless acl.sync.enabled=true. */
   private final AclSyncManager _aclSyncManager;
+  /** Null unless quota.sync.enabled=true. */
+  private final QuotaSyncManager _quotaSyncManager;
 
   private static final String VERSION;
   private static final String COMMIT_ID;
@@ -134,6 +138,10 @@ public class KafkaCruiseControl {
                       ? AclSyncManager.create(config, _adminClient, dropwizardMetricRegistry,
                                               drift -> _anomalyDetectorManager.reportAclDrift(drift, _time.milliseconds()), _time)
                       : null;
+    _quotaSyncManager = config.getBoolean(QuotaSyncConfig.QUOTA_SYNC_ENABLED_CONFIG)
+                        ? QuotaSyncManager.create(config, _adminClient, dropwizardMetricRegistry,
+                                                  drift -> _anomalyDetectorManager.reportQuotaDrift(drift, _time.milliseconds()), _time)
+                        : null;
   }
 
   /**
@@ -157,6 +165,7 @@ public class KafkaCruiseControl {
     _goalOptimizer = goalOptimizer;
     _provisioner = provisioner;
     _aclSyncManager = null;
+    _quotaSyncManager = null;
   }
 
   /**
@@ -235,6 +244,9 @@ public class KafkaCruiseControl {
     if (_aclSyncManager != null) {
       _aclSyncManager.start();
     }
+    if (_quotaSyncManager != null) {
+      _quotaSyncManager.start();
+    }
     LOG.info("Kafka Cruise Control started.");
   }
 
@@ -250,6 +262,9 @@ public class KafkaCruiseControl {
       _goalOptimizer.shutdown();
       if (_aclSyncManager != null) {
         _aclSyncManager.shutdown();
+      }
+      if (_quotaSyncManager != null) {
+        _quotaSyncManager.shutdown();
       }
       closeAdminClientWithTimeout(_adminClient);
       LOG.info("Kafka Cruise Control shutdown completed.");
