@@ -28,7 +28,8 @@ import org.slf4j.LoggerFactory;
  * match or the timeout passes.
  * <p>
  * Limitation: the admin client sends {@code describeAcls} to one broker of its choice (the least loaded), so one call
- * checks one broker's cache, not every broker's.
+ * checks one broker's cache, not every broker's ({@code acl.sync.verify.mode=ANY_BROKER}; see
+ * {@link PerBrokerAclSyncVerifier} for checking every broker).
  */
 public class AdminAclSyncVerifier implements AclSyncVerifier {
   private static final Logger LOG = LoggerFactory.getLogger(AdminAclSyncVerifier.class);
@@ -47,7 +48,7 @@ public class AdminAclSyncVerifier implements AclSyncVerifier {
   }
 
   @Override
-  public List<ResourcePattern> verify(AclTree expected, long timeoutMs) throws InterruptedException {
+  public AclVerifyResult verify(AclTree expected, long timeoutMs) throws InterruptedException {
     long deadline = _time.milliseconds() + timeoutMs;
     List<ResourcePattern> different;
     while (true) {
@@ -59,7 +60,7 @@ public class AdminAclSyncVerifier implements AclSyncVerifier {
         different = null;
       }
       if (different != null && different.isEmpty()) {
-        return different;
+        return AclVerifyResult.ok();
       }
       if (_time.milliseconds() + RETRY_BACKOFF_MS > deadline) {
         break;
@@ -69,7 +70,7 @@ public class AdminAclSyncVerifier implements AclSyncVerifier {
     if (different == null) {
       throw new IllegalStateException("Couldn't read the brokers' ACLs (describeAcls) within " + timeoutMs + " ms.");
     }
-    return different;
+    return AclVerifyResult.anyBroker(different);
   }
 
   /**

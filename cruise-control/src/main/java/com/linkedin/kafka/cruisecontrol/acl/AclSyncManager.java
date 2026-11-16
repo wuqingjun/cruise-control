@@ -6,6 +6,7 @@ package com.linkedin.kafka.cruisecontrol.acl;
 
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
+import com.linkedin.kafka.cruisecontrol.KafkaCruiseControlUtils;
 import com.linkedin.kafka.cruisecontrol.common.KafkaCruiseControlThreadFactory;
 import com.linkedin.kafka.cruisecontrol.config.KafkaCruiseControlConfig;
 import com.linkedin.kafka.cruisecontrol.config.ZKConfigUtils;
@@ -225,7 +226,10 @@ public class AclSyncManager implements AutoCloseable {
                                      config.getLong(AclSyncConfig.ACL_SYNC_NOTIFICATION_RETENTION_MS_CONFIG));
     LOG.info("ACL sync: file {}, signature {} ({}), ACL root {}.", file, reader.signatureFile(),
              required ? "required" : "NOT required", root);
-    AclSyncManager manager = new AclSyncManager(settings, reader, storeFactory, new AdminAclSyncVerifier(admin, time), driftListener,
+    AclSyncVerifier verifier = "ANY_BROKER".equals(config.getString(AclSyncConfig.ACL_SYNC_VERIFY_MODE_CONFIG))
+                               ? new AdminAclSyncVerifier(admin, time)
+                               : new PerBrokerAclSyncVerifier(admin, KafkaCruiseControlUtils.parseAdminClientConfigs(config), time);
+    AclSyncManager manager = new AclSyncManager(settings, reader, storeFactory, verifier, driftListener,
                                                 time);
     if (metricRegistry != null) {
       manager.registerMetrics(metricRegistry);
@@ -362,6 +366,7 @@ public class AclSyncManager implements AutoCloseable {
     }
     synchronized (this) {
       closeStore();
+      _verifier.close();
     }
   }
 
@@ -472,7 +477,7 @@ public class AclSyncManager implements AutoCloseable {
       }
       AclZkStore.Snapshot snapshot = store.readCurrent();
       AclTreeDiff.Result zkDiff = AclTreeDiff.diff(snapshot.tree(), desired, state.get().state().unmanaged());
-      List<ResourcePattern> brokerDifferences = _verifier.verify(snapshot.tree(), _settings._verifyTimeoutMs);
+      AclVerifyResult brokerDifferences = _verifier.verify(snapshot.tree(), _settings._verifyTimeoutMs);
       if (zkDiff.isEmpty() && brokerDifferences.isEmpty()) {
         return Outcome.IN_SYNC;
       }
@@ -482,7 +487,7 @@ public class AclSyncManager implements AutoCloseable {
   }
 
   private Outcome handleDrift(AclZkStore store, AclFileReader.AclFile file, AclTree desired, AclTreeDiff.Result zkDiff,
-                              List<ResourcePattern> brokerDifferences) throws Exception {
+                              AclVerifyResult brokerDifferences) throws Exception {
     _drifts.incrementAndGet();
     AclDrift drift = new AclDrift(file.sha256(), zkDiff.changes(), brokerDifferences, _settings._driftReapply);
     LOG.warn("{}", drift);
@@ -497,7 +502,7 @@ public class AclSyncManager implements AutoCloseable {
         return synced;
       }
     }
-    Set<ResourcePattern> toNotify = new HashSet<>(brokerDifferences);
+    Set<ResourcePattern> toNotify = new HashSet<>(brokerDifferences.resources());
     zkDiff.changes().forEach(c -> toNotify.remove(c.pattern()));
     if (!toNotify.isEmpty()) {
       Outcome locked = withLock(store, () -> {
@@ -550,9 +555,9 @@ public class AclSyncManager implements AutoCloseable {
   private Outcome verify(AclZkStore store) throws Exception {
     AclTree expected = store.readCurrent().tree();
     long startMs = _time.milliseconds();
-    List<ResourcePattern> differences = _verifier.verify(expected, _settings._verifyTimeoutMs);
+    AclVerifyResult differences = _verifier.verify(expected, _settings._verifyTimeoutMs);
     if (!differences.isEmpty()) {
-      _lastError = "Brokers don't report the ACLs in ZooKeeper within " + _settings._verifyTimeoutMs + " ms: " + locations(differences);
+      _lastError = "Brokers don't report the ACLs in ZooKeeper within " + _settings._verifyTimeoutMs + " ms: " + differences.describe();
       LOG.warn(_lastError);
       return Outcome.VERIFY_FAILED;
     }

@@ -36,6 +36,11 @@ public final class AclTree {
   public static final List<PatternType> PATTERN_TYPES = List.of(PatternType.LITERAL, PatternType.PREFIXED);
   /** Resource types ordered by the name of their ZooKeeper folder. */
   public static final Comparator<ResourceType> RESOURCE_TYPE_ORDER = Comparator.comparing(SecurityUtils::resourceTypeName);
+  /** Resource patterns in tree order: literal before prefixed, then resource type, then name. */
+  public static final Comparator<ResourcePattern> PATTERN_ORDER = Comparator
+      .comparing((ResourcePattern p) -> PATTERN_TYPES.indexOf(p.patternType()))
+      .thenComparing(ResourcePattern::resourceType, RESOURCE_TYPE_ORDER)
+      .thenComparing(ResourcePattern::name);
 
   private final Map<PatternType, SortedMap<ResourceType, SortedMap<String, SortedSet<AclEntryKey>>>> _trees;
 

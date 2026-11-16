@@ -32,10 +32,7 @@ import org.apache.kafka.common.resource.ResourceType;
 public final class AclStateNode {
   private static final int VERSION = 1;
   private static final Gson GSON = new Gson();
-  private static final Comparator<ResourcePattern> PATTERN_ORDER = Comparator
-      .comparing((ResourcePattern p) -> AclTree.PATTERN_TYPES.indexOf(p.patternType()))
-      .thenComparing(ResourcePattern::resourceType, AclTree.RESOURCE_TYPE_ORDER)
-      .thenComparing(ResourcePattern::name);
+  private static final Comparator<ResourcePattern> PATTERN_ORDER = AclTree.PATTERN_ORDER;
 
   private final String _sha256;
   private final long _appliedAtMs;
