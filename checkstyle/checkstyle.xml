@@ -16,7 +16,8 @@ LinkedIn Java style.
 
     <!-- header -->
     <module name="RegexpHeader">
-        <property name="header" value="/\*\n Copyright [0-9]* LinkedIn Corp.*"/>
+        <!-- also accepts the fork author's header on files added in this fork -->
+        <property name="header" value="/\*\n Copyright [0-9]* (LinkedIn Corp|qjwu).*"/>
     </module>
 
     <property name="severity" value="${checkstyle.severity}" default="error"/>

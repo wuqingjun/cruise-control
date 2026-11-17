@@ -1,7 +1,7 @@
 # ACL sync & quota sync for Cruise Control (fork)
 
 > **This is a fork of [Cruise Control](https://github.com/linkedin/cruise-control) (branch `migrate_to_kafka_3_0`,
-> Cruise Control 3.0.x for Apache Kafka 3.x), modified by [@wuqingjun](https://github.com/wuqingjun).** Cruise Control
+> Cruise Control 3.0.x for Apache Kafka 3.x), modified by qjwu.** Cruise Control
 > was originally developed at LinkedIn; this fork is not affiliated with or endorsed by LinkedIn or the Cruise Control
 > maintainers. Licensed under the BSD 2-Clause License — see [`LICENSE`](LICENSE) (unchanged). The original README
 > follows below the line.
