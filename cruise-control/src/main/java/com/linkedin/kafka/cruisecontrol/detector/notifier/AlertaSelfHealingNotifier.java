@@ -13,6 +13,7 @@ import com.linkedin.kafka.cruisecontrol.detector.DiskFailures;
 import com.linkedin.kafka.cruisecontrol.detector.GoalViolations;
 import com.linkedin.kafka.cruisecontrol.detector.KafkaMetricAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.MaintenanceEvent;
+import com.linkedin.kafka.cruisecontrol.detector.QuotaDriftAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.TopicAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.TopicPartitionSizeAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.TopicReplicationFactorAnomaly;
@@ -142,6 +143,15 @@ public class AlertaSelfHealingNotifier extends SelfHealingNotifier {
         aclDriftMessage.setValue(aclDrift.toString());
         aclDriftMessage.setCreateTime(CruiseControlUtils.utcDateFor(aclDrift.detectionTimeMs(), 3, ChronoUnit.SECONDS));
         alertaMessages.add(aclDriftMessage);
+        break;
+      case QUOTA_DRIFT:
+        QuotaDriftAnomaly quotaDrift = (QuotaDriftAnomaly) anomaly;
+        AlertaMessage quotaDriftMessage = new AlertaMessage(localHostname, anomalyType + " - " + quotaDrift.drift().sha256());
+        quotaDriftMessage.setSeverity(NotifierUtils.getAlertSeverity(anomalyType).toString());
+        quotaDriftMessage.setGroup(AlertaAlertGroup.SECURITY.toString());
+        quotaDriftMessage.setValue(quotaDrift.toString());
+        quotaDriftMessage.setCreateTime(CruiseControlUtils.utcDateFor(quotaDrift.detectionTimeMs(), 3, ChronoUnit.SECONDS));
+        alertaMessages.add(quotaDriftMessage);
         break;
       default:
         throw new IllegalStateException("Unrecognized anomaly type.");

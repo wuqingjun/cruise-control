@@ -9,6 +9,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.linkedin.cruisecontrol.detector.Anomaly;
 import com.linkedin.kafka.cruisecontrol.acl.AclDrift;
+import com.linkedin.kafka.cruisecontrol.quota.QuotaDrift;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
 import com.linkedin.cruisecontrol.detector.metricanomaly.MetricAnomalyType;
 import com.linkedin.kafka.cruisecontrol.KafkaCruiseControl;
@@ -320,6 +321,16 @@ public class AnomalyDetectorManager {
   }
 
   /**
+   * Report quota drift found by quota sync, so the configured notifier alerts (anomaly type {@link KafkaAnomalyType#QUOTA_DRIFT}).
+   *
+   * @param drift What quota sync found.
+   * @param detectionTimeMs When it was found.
+   */
+  public void reportQuotaDrift(QuotaDrift drift, long detectionTimeMs) {
+    _anomalies.add(QuotaDriftAnomaly.of(drift, detectionTimeMs));
+  }
+
+  /**
    * (1) Enable or disable self healing for the given anomaly type and (2) update the cached anomaly detector state.
    *
    * @param anomalyType Type of anomaly for which to enable or disable self healing.
@@ -478,6 +489,14 @@ public class AnomalyDetectorManager {
           AnomalyNotificationResult aclDriftResult = _anomalyNotifier.onAclDrift((AclDriftAnomaly) _anomalyInProgress);
           if (aclDriftResult != null && aclDriftResult.action() != AnomalyNotificationResult.Action.IGNORE) {
             LOG.warn("Notifier returned {} for {}; treated as IGNORE.", aclDriftResult.action(), ACL_DRIFT);
+          }
+          notificationResult = AnomalyNotificationResult.ignore();
+          break;
+        case QUOTA_DRIFT:
+          // Alert only, like ACL_DRIFT.
+          AnomalyNotificationResult quotaDriftResult = _anomalyNotifier.onQuotaDrift((QuotaDriftAnomaly) _anomalyInProgress);
+          if (quotaDriftResult != null && quotaDriftResult.action() != AnomalyNotificationResult.Action.IGNORE) {
+            LOG.warn("Notifier returned {} for {}; treated as IGNORE.", quotaDriftResult.action(), QUOTA_DRIFT);
           }
           notificationResult = AnomalyNotificationResult.ignore();
           break;

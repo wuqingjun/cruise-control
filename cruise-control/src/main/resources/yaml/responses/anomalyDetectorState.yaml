@@ -10,6 +10,7 @@ AnomalyDetectorState:
     - recentTopicAnomalies
     - recentMaintenanceEvents
     - recentAclDrifts
+    - recentQuotaDrifts
     - metrics
     - balancednessScore
     - selfHealingEnabledRatio
@@ -49,6 +50,10 @@ AnomalyDetectorState:
       items:
         $ref: '#/AnomalyDetails'
     recentAclDrifts:
+      type: array
+      items:
+        $ref: '#/AnomalyDetails'
+    recentQuotaDrifts:
       type: array
       items:
         $ref: '#/AnomalyDetails'
@@ -120,6 +125,7 @@ SelfHealingEnabledRatio:
     - TOPIC_ANOMALY
     - MAINTENANCE_EVENT
     - ACL_DRIFT
+    - QUOTA_DRIFT
   properties:
     GOAL_VIOLATION:
       type: number
@@ -140,6 +146,9 @@ SelfHealingEnabledRatio:
       type: number
       format: float
     ACL_DRIFT:
+      type: number
+      format: float
+    QUOTA_DRIFT:
       type: number
       format: float
 
@@ -177,6 +186,7 @@ MeanTimeBetweenAnomaliesMs:
     - TOPIC_ANOMALY
     - MAINTENANCE_EVENT
     - ACL_DRIFT
+    - QUOTA_DRIFT
   properties:
     GOAL_VIOLATION:
       type: number
@@ -197,5 +207,8 @@ MeanTimeBetweenAnomaliesMs:
       type: number
       format: double
     ACL_DRIFT:
+      type: number
+      format: double
+    QUOTA_DRIFT:
       type: number
       format: double

@@ -7,6 +7,7 @@ package com.linkedin.kafka.cruisecontrol.detector.notifier;
 import com.linkedin.cruisecontrol.common.CruiseControlConfigurable;
 import com.linkedin.cruisecontrol.detector.AnomalyType;
 import com.linkedin.kafka.cruisecontrol.detector.AclDriftAnomaly;
+import com.linkedin.kafka.cruisecontrol.detector.QuotaDriftAnomaly;
 import com.linkedin.kafka.cruisecontrol.detector.BrokerFailures;
 import com.linkedin.kafka.cruisecontrol.detector.DiskFailures;
 import com.linkedin.kafka.cruisecontrol.detector.GoalViolations;
@@ -76,6 +77,16 @@ public interface AnomalyNotifier extends CruiseControlConfigurable {
    * @return The notification result; anything but ignore is treated as ignore, because there is no self-healing fix.
    */
   default AnomalyNotificationResult onAclDrift(AclDriftAnomaly aclDrift) {
+    return AnomalyNotificationResult.ignore();
+  }
+
+  /**
+   * This method is called when quota sync finds quota drift; alert only (quota sync repairs drift itself, if configured).
+   *
+   * @param quotaDrift the detected quota drift.
+   * @return The notification result; anything but ignore is treated as ignore.
+   */
+  default AnomalyNotificationResult onQuotaDrift(QuotaDriftAnomaly quotaDrift) {
     return AnomalyNotificationResult.ignore();
   }
 
