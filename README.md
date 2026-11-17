@@ -1,3 +1,39 @@
+# ACL sync & quota sync for Cruise Control (fork)
+
+> **This is a fork of [Cruise Control](https://github.com/linkedin/cruise-control) (branch `migrate_to_kafka_3_0`,
+> Cruise Control 3.0.x for Apache Kafka 3.x), modified by [@wuqingjun](https://github.com/wuqingjun).** Cruise Control
+> was originally developed at LinkedIn; this fork is not affiliated with or endorsed by LinkedIn or the Cruise Control
+> maintainers. Licensed under the BSD 2-Clause License — see [`LICENSE`](LICENSE) (unchanged). The original README
+> follows below the line.
+>
+> Companion project: [Apache Kafka 3.9 fork](https://github.com/wuqingjun/kafka) (SAML authentication, claim-based
+> authorization, identity-based throttling). Default branch: `cc-3.x-multi-identity`. Kafka mode: ZooKeeper.
+
+## Added features
+
+| Feature | What it does | Enable with |
+|---|---|---|
+| **ACL sync (ACLs as code)** | One CI/CD-deployed JSON file with all Kafka ACLs is the single source of truth. Cruise Control verifies its detached signature (SHA256withRSA / SHA256withECDSA, PEM public key), validates it, compares it with the brokers' ACL storage in ZooKeeper and applies the difference in atomic, versioned batches with change notifications, so brokers reload without restart. Lock for one writer; resources that existed before the first sync are kept as unmanaged. | `acl.sync.enabled=true`, `acl.sync.file`, `acl.sync.signature.public.key.file`, … (`AclSyncConfig`) |
+| **Per-broker verification** | After each apply and on each drift check, every live broker is asked for its ACLs (its cache) and compared with ZooKeeper; stale or unreachable brokers are named. | `acl.sync.verify.mode=PER_BROKER` (default) / `ANY_BROKER` |
+| **ACL drift detection** | Periodic comparison of the file with ZooKeeper and of ZooKeeper with the brokers; repaired (`REAPPLY`) or reported; new anomaly type `ACL_DRIFT` (alert only) through the configured notifier (Slack, MS Teams, Alerta, …). | `acl.sync.drift.check.interval.ms`, `acl.sync.drift.action` |
+| **ZooKeeper protection** | Znode ACLs so that only Cruise Control can write the ACL storage (TLS client certificate identity); brokers read; nobody else. Cruise Control deletes its own change notifications. | `acl.sync.zookeeper.acl.enabled=true`, `acl.sync.zookeeper.broker.identities`, `zookeeper.ssl.*` |
+| **Quota sync** | Client quotas by identity (`Claim:…`, `User:…`, default) from a signed JSON file, applied through Kafka's quota API; the file owns all `user` quotas; drift detection with the new anomaly type `QUOTA_DRIFT`. Works with the Kafka fork's `MultiIdentityQuotaCallback`. | `quota.sync.enabled=true`, `quota.sync.file`, … (`QuotaSyncConfig`) |
+
+## Modifications
+
+Changes relative to Cruise Control `migrate_to_kafka_3_0` (`be627e21`):
+
+- **New packages:** `com.linkedin.kafka.cruisecontrol.acl` (ACL sync), `com.linkedin.kafka.cruisecontrol.quota` (quota
+  sync); new `config/constants/AclSyncConfig.java`, `QuotaSyncConfig.java`; `detector/AclDriftAnomaly.java`,
+  `QuotaDriftAnomaly.java`; tests for all of them.
+- **Modified:** `KafkaCruiseControl.java` (create / start / stop the sync managers), `config/KafkaCruiseControlConfig.java`
+  (settings), `detector/AnomalyDetectorManager.java`, `AnomalyDetectorState.java`, `AnomalyDetails.java`,
+  `detector/notifier/{KafkaAnomalyType, AnomalyNotifier, SelfHealingNotifier, AlertaSelfHealingNotifier, AlertaAlertGroup}.java`
+  (anomaly types `ACL_DRIFT`, `QUOTA_DRIFT`), `resources/yaml/responses/anomalyDetectorState.yaml` (`/state` schema),
+  `AnomalyDetailsTest.java`, `AnomalyDetectorManagerTest.java`.
+
+---
+
 Cruise Control for Apache Kafka
 ===================
 
