@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
+import javax.net.ssl.KeyManager;
 import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -24,9 +25,15 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509ExtendedTrustManager;
 
 /**
- * Records the certificate chain a broker sends during the TLS handshake. The handshake is aborted right after the
- * broker's certificates are received: no client certificate is needed and no Kafka request is sent. The recorded chain
+ * Records the certificate chain a broker sends during the TLS handshake; no Kafka request is sent. The recorded chain
  * is not trusted by this class; it is only reported (and validated separately).
+ * <ul>
+ *   <li>With key managers (Cruise Control's own client certificate): the handshake completes, so a listener with
+ *       {@code ssl.client.auth=required} authenticates Cruise Control, and the connection is closed cleanly — brokers
+ *       log no failed authentication.</li>
+ *   <li>Without: the handshake is aborted right after the broker's certificates are received (the broker logs a failed
+ *       handshake).</li>
+ * </ul>
  */
 public class BrokerCertificateChainProbe {
   private static final Pattern IP_ADDRESS = Pattern.compile("^[0-9.]+$|^[0-9a-fA-F:]+$");
@@ -40,17 +47,21 @@ public class BrokerCertificateChainProbe {
     }
   }
 
-  /** Accepts nothing: records the server's chain, then aborts. */
+  /** Records the server's chain; then either lets the handshake complete or aborts it. */
   private static final class RecordingTrustManager extends X509ExtendedTrustManager {
     private final AtomicReference<X509Certificate[]> _chain;
+    private final boolean _abort;
 
-    RecordingTrustManager(AtomicReference<X509Certificate[]> chain) {
+    RecordingTrustManager(AtomicReference<X509Certificate[]> chain, boolean abort) {
       _chain = chain;
+      _abort = abort;
     }
 
     private void record(X509Certificate[] chain) throws CertificateException {
       _chain.set(chain == null ? new X509Certificate[0] : chain.clone());
-      throw new ChainRecorded();
+      if (_abort) {
+        throw new ChainRecorded();
+      }
     }
 
     @Override
@@ -90,12 +101,22 @@ public class BrokerCertificateChainProbe {
   }
 
   private final int _timeoutMs;
+  private final KeyManager[] _keyManagers;
 
   /**
    * @param timeoutMs Connect and handshake timeout.
    */
   public BrokerCertificateChainProbe(int timeoutMs) {
+    this(timeoutMs, null);
+  }
+
+  /**
+   * @param timeoutMs Connect and handshake timeout.
+   * @param keyManagers Client certificate to complete the handshake with, or {@code null} to abort it after the chain.
+   */
+  public BrokerCertificateChainProbe(int timeoutMs, KeyManager[] keyManagers) {
     _timeoutMs = timeoutMs;
+    _keyManagers = keyManagers == null ? null : keyManagers.clone();
   }
 
   /**
@@ -109,7 +130,7 @@ public class BrokerCertificateChainProbe {
     SSLContext context;
     try {
       context = SSLContext.getInstance("TLS");
-      context.init(null, new TrustManager[]{new RecordingTrustManager(recorded)}, null);
+      context.init(_keyManagers, new TrustManager[]{new RecordingTrustManager(recorded, _keyManagers == null)}, null);
     } catch (GeneralSecurityException e) {
       throw new IOException("Cannot create an SSL context: " + e.getMessage(), e);
     }
