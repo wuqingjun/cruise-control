@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
@@ -26,6 +28,8 @@ import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.config.SslConfigs;
+import org.apache.kafka.common.config.types.Password;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.security.ssl.DefaultSslEngineFactory;
 import org.apache.kafka.common.utils.Time;
@@ -98,7 +102,8 @@ public class RootCaMonitor {
     Object protocol = adminConfigs.get(AdminClientConfig.SECURITY_PROTOCOL_CONFIG);
     String securityProtocol = protocol == null ? SecurityProtocol.PLAINTEXT.name : protocol.toString();
     int timeoutMs = config.getInt(RootCaConfig.ROOT_CA_PROBE_TIMEOUT_MS_CONFIG);
-    BrokerCertificateChainProbe probe = new BrokerCertificateChainProbe(timeoutMs);
+    boolean tls = usesTls(securityProtocol);
+    BrokerCertificateChainProbe probe = new BrokerCertificateChainProbe(timeoutMs, tls ? ccKeyManagers(adminConfigs) : null);
     Supplier<Collection<Node>> brokers = () -> {
       try {
         return adminClient.get().describeCluster().nodes().get(timeoutMs, TimeUnit.MILLISECONDS);
@@ -107,12 +112,45 @@ public class RootCaMonitor {
       }
     };
     LOG.info("Root CA endpoint: {} configured root CA thumbprint(s) {}.", thumbprints.size(), thumbprints);
-    return new RootCaMonitor(thumbprints, brokers, probe::probe, usesTls(securityProtocol) ? ccTrust(adminConfigs) : null,
+    return new RootCaMonitor(thumbprints, brokers, probe::probe, tls ? ccTrust(adminConfigs) : null,
                              securityProtocol, config.getLong(RootCaConfig.ROOT_CA_PROBE_CACHE_MS_CONFIG), Time.SYSTEM);
   }
 
   private static boolean usesTls(String securityProtocol) {
     return SecurityProtocol.SSL.name.equals(securityProtocol) || SecurityProtocol.SASL_SSL.name.equals(securityProtocol);
+  }
+
+  /**
+   * Cruise Control's own client certificate (the keystore of its admin client), so the probe can complete the handshake
+   * with listeners that require client authentication.
+   *
+   * @param adminConfigs Cruise Control's admin client configs.
+   * @return The key managers, or {@code null} if no keystore is configured or it can't be loaded.
+   */
+  private static KeyManager[] ccKeyManagers(Map<String, Object> adminConfigs) {
+    if (adminConfigs.get(SslConfigs.SSL_KEYSTORE_LOCATION_CONFIG) == null) {
+      return null;
+    }
+    DefaultSslEngineFactory factory = new DefaultSslEngineFactory();
+    try {
+      factory.configure(new AdminClientConfig(adminConfigs).values());
+      KeyStore keystore = factory.keystore();
+      if (keystore == null) {
+        return null;
+      }
+      Object keyPassword = adminConfigs.getOrDefault(SslConfigs.SSL_KEY_PASSWORD_CONFIG,
+                                                     adminConfigs.get(SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG));
+      char[] password = keyPassword instanceof Password ? ((Password) keyPassword).value().toCharArray()
+                                                         : keyPassword == null ? null : keyPassword.toString().toCharArray();
+      KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+      kmf.init(keystore, password);
+      return kmf.getKeyManagers();
+    } catch (Exception e) {
+      LOG.warn("Root CA endpoint: cannot load Cruise Control's keystore; probes will abort the handshake: {}", e.getMessage());
+      return null;
+    } finally {
+      factory.close();
+    }
   }
 
   /**
