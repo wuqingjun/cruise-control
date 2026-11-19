@@ -13,9 +13,11 @@ import com.linkedin.kafka.cruisecontrol.config.constants.CruiseControlParameters
 import com.linkedin.kafka.cruisecontrol.config.constants.CruiseControlRequestConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.ExecutorConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.MonitorConfig;
+import com.linkedin.kafka.cruisecontrol.config.constants.RootCaConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.UserTaskManagerConfig;
 import com.linkedin.kafka.cruisecontrol.config.constants.WebServerConfig;
 import com.linkedin.kafka.cruisecontrol.metricsreporter.CruiseControlMetricsReporterConfig;
+import com.linkedin.kafka.cruisecontrol.rootca.CertificateChains;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.HashSet;
@@ -42,7 +44,8 @@ public class KafkaCruiseControlConfig extends AbstractConfig {
   static {
     CONFIG = CruiseControlRequestConfig.define(CruiseControlParametersConfig.define(AnomalyDetectorConfig.define(
         AnalyzerConfig.define(ExecutorConfig.define(MonitorConfig.define(WebServerConfig.define(
-            UserTaskManagerConfig.define(AclSyncConfig.define(QuotaSyncConfig.define(new ConfigDef()))))))))))
+            UserTaskManagerConfig.define(AclSyncConfig.define(QuotaSyncConfig.define(
+            RootCaConfig.define(new ConfigDef())))))))))))
         .withClientSslSupport().withClientSaslSupport();
   }
 
@@ -60,6 +63,18 @@ public class KafkaCruiseControlConfig extends AbstractConfig {
     sanityCheckSecurity();
     sanityCheckBalancingConstraints();
     sanityCheckWebServerUrlPrefix();
+    sanityCheckRootCaThumbprints();
+  }
+
+  /**
+   * Root CA thumbprints must be 64 hex digits (SHA-256), so a typo stops Cruise Control instead of being published.
+   */
+  private void sanityCheckRootCaThumbprints() {
+    try {
+      CertificateChains.normalizeThumbprints(getList(RootCaConfig.ROOT_CA_THUMBPRINTS_CONFIG));
+    } catch (IllegalArgumentException e) {
+      throw new ConfigException(RootCaConfig.ROOT_CA_THUMBPRINTS_CONFIG + ": " + e.getMessage());
+    }
   }
 
   /**

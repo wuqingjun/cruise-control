@@ -1,4 +1,4 @@
-# ACL sync & quota sync for Cruise Control (fork)
+# ACL sync, quota sync & root CA thumbprints for Cruise Control (fork)
 
 > **This is a fork of [Cruise Control](https://github.com/linkedin/cruise-control) (branch `migrate_to_kafka_3_0`,
 > Cruise Control 3.0.x for Apache Kafka 3.x), modified by qjwu.** Cruise Control
@@ -18,19 +18,43 @@
 | **ACL drift detection** | Periodic comparison of the file with ZooKeeper and of ZooKeeper with the brokers; repaired (`REAPPLY`) or reported; new anomaly type `ACL_DRIFT` (alert only) through the configured notifier (Slack, MS Teams, Alerta, …). | `acl.sync.drift.check.interval.ms`, `acl.sync.drift.action` |
 | **ZooKeeper protection** | Znode ACLs so that only Cruise Control can write the ACL storage (TLS client certificate identity); brokers read; nobody else. Cruise Control deletes its own change notifications. | `acl.sync.zookeeper.acl.enabled=true`, `acl.sync.zookeeper.broker.identities`, `zookeeper.ssl.*` |
 | **Quota sync** | Client quotas by identity (`Claim:…`, `User:…`, default) from a signed JSON file, applied through Kafka's quota API; the file owns all `user` quotas; drift detection with the new anomaly type `QUOTA_DRIFT`. Works with the Kafka fork's `MultiIdentityQuotaCallback`. | `quota.sync.enabled=true`, `quota.sync.file`, … (`QuotaSyncConfig`) |
+| **Root CA thumbprints for clients** (`GET /kafkacruisecontrol/root_ca`) | Publishes the SHA-256 thumbprints of the root CAs clients should pin (a **list**, so a root CA can be rotated: announce the new root before any broker sends it, remove the old one afterwards) and checks them against what the brokers actually send: Cruise Control probes each broker's TLS endpoint, records its certificate chain (no client certificate needed, no Kafka request sent), and reports per thumbprint `IN_USE` / `NOT_IN_USE` with the brokers using it, per broker the chain (leaf / intermediate / root with thumbprints and expiry), whether it is complete, whether its root is listed, and whether Cruise Control's own truststore trusts it. `consistent` = every broker sends a complete chain ending in a listed root. Role: viewer (thumbprints are public). For clients that pin the broker's root CA by thumbprint, e.g. [librdkafka](https://github.com/wuqingjun/kafka/tree/kafka-3.9-multi-identity/examples/librdkafka). | `root.ca.thumbprints=<sha256>,<sha256>`; options `root.ca.probe.cache.ms` (60000), `root.ca.probe.timeout.ms` (10000) (`RootCaConfig`) |
+
+**Serve the REST API over HTTPS** when clients take the thumbprints from Cruise Control: a client pins whatever it
+receives, so an answer tampered with in transit would make it trust an attacker's root. Use a web server certificate
+from a CA the client machines already trust (e.g. the corporate CA in their OS trust store):
+`webserver.ssl.enable=true`, `webserver.ssl.keystore.location`, `webserver.ssl.keystore.type`,
+`webserver.ssl.keystore.password`, `webserver.ssl.key.password`. Then, e.g.:
+
+```sh
+curl --cacert corporate-ca.crt 'https://cruise-control:9090/kafkacruisecontrol/root_ca?json=true'
+# {"rootCaThumbprints":[{"sha256":"15476b7b…","status":"IN_USE","brokerIds":[1,2],…},
+#                       {"sha256":"314e50ce…","status":"NOT_IN_USE","brokerIds":[]}],
+#  "consistent":true,"problems":[],"brokers":[…],"probedAtMs":…,"version":1}
+```
+
+Alternatively, have a pipeline or an operator fetch the list, review it and distribute it with the clients' (signed)
+configuration.
 
 ## Modifications
 
 Changes relative to Cruise Control `migrate_to_kafka_3_0` (`be627e21`):
 
 - **New packages:** `com.linkedin.kafka.cruisecontrol.acl` (ACL sync), `com.linkedin.kafka.cruisecontrol.quota` (quota
-  sync); new `config/constants/AclSyncConfig.java`, `QuotaSyncConfig.java`; `detector/AclDriftAnomaly.java`,
-  `QuotaDriftAnomaly.java`; tests for all of them.
+  sync), `com.linkedin.kafka.cruisecontrol.rootca` (root CA thumbprints); new `config/constants/AclSyncConfig.java`,
+  `QuotaSyncConfig.java`, `RootCaConfig.java`; `detector/AclDriftAnomaly.java`, `QuotaDriftAnomaly.java`;
+  `servlet/handler/sync/RootCaRequest.java`, `servlet/parameters/RootCaParameters.java`,
+  `servlet/response/RootCaState.java`, `resources/yaml/endpoints/rootCa.yaml`, `resources/yaml/responses/rootCaState.yaml`;
+  tests for all of them.
 - **Modified:** `KafkaCruiseControl.java` (create / start / stop the sync managers), `config/KafkaCruiseControlConfig.java`
   (settings), `detector/AnomalyDetectorManager.java`, `AnomalyDetectorState.java`, `AnomalyDetails.java`,
   `detector/notifier/{KafkaAnomalyType, AnomalyNotifier, SelfHealingNotifier, AlertaSelfHealingNotifier, AlertaAlertGroup}.java`
   (anomaly types `ACL_DRIFT`, `QUOTA_DRIFT`), `resources/yaml/responses/anomalyDetectorState.yaml` (`/state` schema),
-  `AnomalyDetailsTest.java`, `AnomalyDetectorManagerTest.java`.
+  `AnomalyDetailsTest.java`, `AnomalyDetectorManagerTest.java`; for the `root_ca` endpoint:
+  `KafkaCruiseControl.java` (`rootCaMonitor()`), `servlet/CruiseControlEndPoint.java`,
+  `servlet/KafkaCruiseControlServletUtils.java`, `servlet/parameters/ParameterUtils.java`,
+  `servlet/security/DefaultRoleSecurityProvider.java` (viewer role), `config/constants/CruiseControl{Request,Parameters}Config.java`,
+  `vertx/MainVerticle.java`, `resources/yaml/base.yaml`.
 
 ---
 

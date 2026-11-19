@@ -56,3 +56,5 @@ paths:
     $ref: 'endpoints/userTasks.yaml#/UserTasksEndpoint'
   /remove_disks:
     $ref: 'endpoints/removeDisks.yaml#/RemoveDisksEndpoint'
+  /root_ca:
+    $ref: 'endpoints/rootCa.yaml#/RootCaEndpoint'

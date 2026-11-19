@@ -26,6 +26,7 @@ import com.linkedin.kafka.cruisecontrol.servlet.parameters.AdminParameters;
 import com.linkedin.kafka.cruisecontrol.servlet.parameters.TopicConfigurationParameters;
 import com.linkedin.kafka.cruisecontrol.servlet.parameters.UserPermissionsParameters;
 import com.linkedin.kafka.cruisecontrol.servlet.parameters.RightsizeParameters;
+import com.linkedin.kafka.cruisecontrol.servlet.parameters.RootCaParameters;
 import org.apache.kafka.common.config.ConfigDef;
 
 
@@ -195,6 +196,13 @@ public final class CruiseControlParametersConfig {
   public static final String DEFAULT_REMOVE_DISKS_PARAMETERS_CLASS = RemoveDisksParameters.class.getName();
   public static final String REMOVE_DISKS_PARAMETERS_CLASS_DOC = "The class for parameters of a disks removal request.";
 
+  /**
+   * <code>root.ca.parameters.class</code>
+   */
+  public static final String ROOT_CA_PARAMETERS_CLASS_CONFIG = "root.ca.parameters.class";
+  public static final String DEFAULT_ROOT_CA_PARAMETERS_CLASS = RootCaParameters.class.getName();
+  public static final String ROOT_CA_PARAMETERS_CLASS_DOC = "The class for parameters of a root CA thumbprints request.";
+
   private CruiseControlParametersConfig() {
   }
 
@@ -319,6 +327,11 @@ public final class CruiseControlParametersConfig {
                             ConfigDef.Type.CLASS,
                             DEFAULT_REMOVE_DISKS_PARAMETERS_CLASS,
                             ConfigDef.Importance.MEDIUM,
-                            REMOVE_DISKS_PARAMETERS_CLASS_DOC);
+                            REMOVE_DISKS_PARAMETERS_CLASS_DOC)
+                    .define(ROOT_CA_PARAMETERS_CLASS_CONFIG,
+                            ConfigDef.Type.CLASS,
+                            DEFAULT_ROOT_CA_PARAMETERS_CLASS,
+                            ConfigDef.Importance.MEDIUM,
+                            ROOT_CA_PARAMETERS_CLASS_DOC);
   }
 }
