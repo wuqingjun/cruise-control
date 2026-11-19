@@ -24,6 +24,7 @@ import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.PauseRequest;
 import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.ResumeRequest;
 import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.ReviewBoardRequest;
 import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.ReviewRequest;
+import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.RootCaRequest;
 import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.StopProposalRequest;
 import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.TrainRequest;
 import com.linkedin.kafka.cruisecontrol.servlet.handler.sync.UserTasksRequest;
@@ -197,6 +198,13 @@ public final class CruiseControlRequestConfig {
   public static final String DEFAULT_REMOVE_DISKS_REQUEST_CLASS = RemoveDisksRequest.class.getName();
   public static final String REMOVE_DISKS_REQUEST_CLASS_DOC = "The class to handle a disks removal request.";
 
+  /**
+   * <code>root.ca.request.class</code>
+   */
+  public static final String ROOT_CA_REQUEST_CLASS_CONFIG = "root.ca.request.class";
+  public static final String DEFAULT_ROOT_CA_REQUEST_CLASS = RootCaRequest.class.getName();
+  public static final String ROOT_CA_REQUEST_CLASS_DOC = "The class to handle a root CA thumbprints request.";
+
   private CruiseControlRequestConfig() {
   }
 
@@ -321,6 +329,11 @@ public final class CruiseControlRequestConfig {
                             ConfigDef.Type.CLASS,
                             DEFAULT_REMOVE_DISKS_REQUEST_CLASS,
                             ConfigDef.Importance.MEDIUM,
-                            REMOVE_DISKS_REQUEST_CLASS_DOC);
+                            REMOVE_DISKS_REQUEST_CLASS_DOC)
+                    .define(ROOT_CA_REQUEST_CLASS_CONFIG,
+                            ConfigDef.Type.CLASS,
+                            DEFAULT_ROOT_CA_REQUEST_CLASS,
+                            ConfigDef.Importance.MEDIUM,
+                            ROOT_CA_REQUEST_CLASS_DOC);
   }
 }

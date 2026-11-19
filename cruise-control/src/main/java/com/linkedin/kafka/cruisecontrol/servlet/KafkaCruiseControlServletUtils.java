@@ -122,6 +122,9 @@ public final class KafkaCruiseControlServletUtils {
     RequestParameterWrapper removeDisks = new RequestParameterWrapper(REMOVE_DISKS_PARAMETERS_CLASS_CONFIG,
                                                                       REMOVE_DISKS_PARAMETER_OBJECT_CONFIG,
                                                                       REMOVE_DISKS_REQUEST_CLASS_CONFIG);
+    RequestParameterWrapper rootCa = new RequestParameterWrapper(ROOT_CA_PARAMETERS_CLASS_CONFIG,
+                                                                 ROOT_CA_PARAMETER_OBJECT_CONFIG,
+                                                                 ROOT_CA_REQUEST_CLASS_CONFIG);
 
     requestParameterConfigs.put(BOOTSTRAP, bootstrap);
     requestParameterConfigs.put(TRAIN, train);
@@ -146,6 +149,7 @@ public final class KafkaCruiseControlServletUtils {
     requestParameterConfigs.put(RIGHTSIZE, rightsize);
     requestParameterConfigs.put(PERMISSIONS, permissions);
     requestParameterConfigs.put(REMOVE_DISKS, removeDisks);
+    requestParameterConfigs.put(ROOT_CA, rootCa);
 
     REQUEST_PARAMETER_CONFIGS = Collections.unmodifiableMap(requestParameterConfigs);
   }

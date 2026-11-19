@@ -45,6 +45,7 @@ import com.linkedin.kafka.cruisecontrol.monitor.LoadMonitor;
 import com.linkedin.kafka.cruisecontrol.monitor.MonitorUtils;
 import com.linkedin.kafka.cruisecontrol.monitor.metricdefinition.KafkaMetricDef;
 import com.linkedin.kafka.cruisecontrol.monitor.task.LoadMonitorTaskRunner;
+import com.linkedin.kafka.cruisecontrol.rootca.RootCaMonitor;
 import com.linkedin.kafka.cruisecontrol.servlet.UserTaskManager;
 import com.linkedin.kafka.cruisecontrol.servlet.response.stats.BrokerStats;
 import java.io.InputStream;
@@ -89,6 +90,7 @@ public class KafkaCruiseControl {
   private final AnomalyDetectorManager _anomalyDetectorManager;
   private final Time _time;
   private final AdminClient _adminClient;
+  private RootCaMonitor _rootCaMonitor;
   private final Provisioner _provisioner;
   /** Null unless acl.sync.enabled=true. */
   private final AclSyncManager _aclSyncManager;
@@ -197,6 +199,17 @@ public class KafkaCruiseControl {
    */
   public AdminClient adminClient() {
     return _adminClient;
+  }
+
+  /**
+   * The root CA thumbprints clients should pin, checked against the brokers' certificate chains (created on first use).
+   * @return The root CA monitor of Cruise Control.
+   */
+  public synchronized RootCaMonitor rootCaMonitor() {
+    if (_rootCaMonitor == null) {
+      _rootCaMonitor = RootCaMonitor.create(_config, this::adminClient);
+    }
+    return _rootCaMonitor;
   }
 
   /**

@@ -1,0 +1,107 @@
+RootCaState:
+  type: object
+  required:
+    - rootCaThumbprints
+    - consistent
+    - problems
+    - brokers
+    - probedAtMs
+    - version
+  properties:
+    rootCaThumbprints:
+      type: array
+      items:
+        $ref: '#/RootCaThumbprintInfo'
+    consistent:
+      type: boolean
+    problems:
+      type: array
+      items:
+        type: string
+    brokers:
+      type: array
+      items:
+        $ref: '#/RootCaBrokerChain'
+    probedAtMs:
+      type: integer
+      format: int64
+    version:
+      type: integer
+      format: int32
+
+RootCaThumbprintInfo:
+  type: object
+  required:
+    - sha256
+    - status
+    - brokerIds
+  properties:
+    sha256:
+      type: string
+    status:
+      type: string
+      enum: [IN_USE, NOT_IN_USE]
+    brokerIds:
+      type: array
+      items:
+        type: integer
+        format: int32
+    subject:
+      type: string
+    notAfter:
+      type: string
+
+RootCaBrokerChain:
+  type: object
+  required:
+    - brokerId
+    - endpoint
+    - chain
+    - chainComplete
+    - rootListed
+    - trustedByCruiseControl
+  properties:
+    brokerId:
+      type: integer
+      format: int32
+    endpoint:
+      type: string
+    chain:
+      type: array
+      items:
+        $ref: '#/RootCaCertificate'
+    chainComplete:
+      type: boolean
+    rootListed:
+      type: boolean
+    trustedByCruiseControl:
+      type: boolean
+    rootSha256:
+      type: string
+    incompleteReason:
+      type: string
+    untrustedReason:
+      type: string
+    error:
+      type: string
+
+RootCaCertificate:
+  type: object
+  required:
+    - role
+    - subject
+    - issuer
+    - sha256
+    - notAfter
+  properties:
+    role:
+      type: string
+      enum: [leaf, intermediate, root]
+    subject:
+      type: string
+    issuer:
+      type: string
+    sha256:
+      type: string
+    notAfter:
+      type: string
