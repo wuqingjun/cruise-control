@@ -19,6 +19,7 @@ public final class AclDrift {
   private final List<ResourceChange> _zkChanges;
   private final AclVerifyResult _brokers;
   private final boolean _reapplied;
+  private final boolean _whileFileInvalid;
 
   /**
    * @param sha256 Hash of the approved file.
@@ -27,6 +28,20 @@ public final class AclDrift {
    * @param reapplied Whether Cruise Control repaired it ({@code acl.sync.drift.action=REAPPLY}).
    */
   public AclDrift(String sha256, List<ResourceChange> zkChanges, AclVerifyResult brokers, boolean reapplied) {
+    this(sha256, zkChanges, brokers, reapplied, false);
+  }
+
+  /**
+   * @param sha256 SHA-256 of the file ZooKeeper was compared with.
+   * @param zkChanges What differs in ZooKeeper.
+   * @param brokers Brokers serving something else than ZooKeeper.
+   * @param reapplied Whether the file was re-applied.
+   * @param whileFileInvalid Whether the deployed file is invalid, so the comparison is with the last valid file and
+   *                         nothing is repaired.
+   */
+  public AclDrift(String sha256, List<ResourceChange> zkChanges, AclVerifyResult brokers, boolean reapplied,
+                  boolean whileFileInvalid) {
+    _whileFileInvalid = whileFileInvalid;
     _sha256 = sha256;
     _zkChanges = Collections.unmodifiableList(new ArrayList<>(zkChanges));
     _brokers = brokers;
@@ -78,11 +93,19 @@ public final class AclDrift {
     return _reapplied;
   }
 
+  /**
+   * @return Whether the drift was found while the deployed file is invalid (compared with the last valid file, not repaired).
+   */
+  public boolean whileFileInvalid() {
+    return _whileFileInvalid;
+  }
+
   @Override
   public String toString() {
     List<String> zk = new ArrayList<>();
     _zkChanges.forEach(c -> zk.add(c.type() + " " + AclTreeParser.location(c.pattern())));
     return String.format("ACL drift (file sha256 %s, %s): ZooKeeper vs file %s; brokers vs ZooKeeper: %s", _sha256,
-                         _reapplied ? "re-applied" : "reported only", zk, _brokers.describe());
+                         _whileFileInvalid ? "reported only: the deployed file is invalid, compared with the last valid file, not repaired"
+                                           : _reapplied ? "re-applied" : "reported only", zk, _brokers.describe());
   }
 }

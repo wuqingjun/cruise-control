@@ -43,6 +43,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
@@ -384,6 +385,36 @@ public class AclSyncManagerTest {
     assertTrue(_drifts.get(1).reapplied());
     assertEquals(tree(topic("orders"), List.of(read("alice"))), zkTree());
     assertEquals(Outcome.IN_SYNC, repairer.checkDrift());
+  }
+
+  /**
+   * While a newly deployed file is invalid, drift in ZooKeeper against the last valid file is reported (alert only),
+   * not repaired.
+   *
+   * @throws Exception On error.
+   */
+  @Test
+  public void testDriftAlertedWhileTheDeployedFileIsInvalid() throws Exception {
+    deploy(file("orders", "alice"));
+    AclSyncManager manager = manager(true);
+    assertEquals(Outcome.APPLIED, manager.checkFile());
+    // a new file that fails validation (tampered after signing)
+    deploy(file("orders", "bob"));
+    Files.writeString(_aclFile, file("orders", "mallory"));
+    assertEquals(Outcome.INVALID_FILE, manager.checkDrift());
+    assertEquals(0, _drifts.size());
+    // someone writes directly into ZooKeeper while the file is invalid: alerted, not repaired (even with REAPPLY)
+    writeLikeABroker(topic("rogue"), List.of(read("mallory")));
+    assertEquals(Outcome.INVALID_FILE, manager.checkDrift());
+    assertEquals(1, _drifts.size());
+    assertTrue(_drifts.get(0).whileFileInvalid());
+    assertFalse(_drifts.get(0).reapplied());
+    assertTrue(_drifts.get(0).toString(), _drifts.get(0).toString().contains("the deployed file is invalid"));
+    assertTrue(zkTree().contains(topic("rogue")));
+    // a valid file again: applied, the rogue resource removed
+    deploy(file("orders", "bob"));
+    assertEquals(Outcome.APPLIED, manager.checkDrift());
+    assertEquals(tree(topic("orders"), List.of(read("bob"))), zkTree());
   }
 
   @Test

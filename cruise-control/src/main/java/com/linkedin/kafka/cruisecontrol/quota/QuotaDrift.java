@@ -14,6 +14,7 @@ public final class QuotaDrift {
   private final String _sha256;
   private final List<QuotaDiff.Change> _changes;
   private final boolean _reapplied;
+  private final boolean _whileFileInvalid;
 
   /**
    * @param sha256 Hash of the approved file.
@@ -21,9 +22,21 @@ public final class QuotaDrift {
    * @param reapplied Whether Cruise Control repaired it ({@code quota.sync.drift.action=REAPPLY}).
    */
   public QuotaDrift(String sha256, List<QuotaDiff.Change> changes, boolean reapplied) {
+    this(sha256, changes, reapplied, false);
+  }
+
+  /**
+   * @param sha256 SHA-256 of the file the stored quotas were compared with.
+   * @param changes What differs.
+   * @param reapplied Whether the file was re-applied.
+   * @param whileFileInvalid Whether the deployed file is invalid, so the comparison is with the last valid file and
+   *                         nothing is repaired.
+   */
+  public QuotaDrift(String sha256, List<QuotaDiff.Change> changes, boolean reapplied, boolean whileFileInvalid) {
     _sha256 = sha256;
     _changes = List.copyOf(changes);
     _reapplied = reapplied;
+    _whileFileInvalid = whileFileInvalid;
   }
 
   /**
@@ -47,9 +60,17 @@ public final class QuotaDrift {
     return _reapplied;
   }
 
+  /**
+   * @return Whether the drift was found while the deployed file is invalid (compared with the last valid file, not repaired).
+   */
+  public boolean whileFileInvalid() {
+    return _whileFileInvalid;
+  }
+
   @Override
   public String toString() {
-    return String.format("Quota drift (file sha256 %s, %s): stored vs file %s", _sha256, _reapplied ? "re-applied" : "reported only",
-                         _changes);
+    return String.format("Quota drift (file sha256 %s, %s): stored vs file %s", _sha256,
+                         _whileFileInvalid ? "reported only: the deployed file is invalid, compared with the last valid file, not repaired"
+                                           : _reapplied ? "re-applied" : "reported only", _changes);
   }
 }

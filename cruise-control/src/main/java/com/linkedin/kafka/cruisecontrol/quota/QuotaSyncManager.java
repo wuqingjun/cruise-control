@@ -103,7 +103,7 @@ public class QuotaSyncManager implements AutoCloseable {
   private final AtomicLong _drifts = new AtomicLong();
   // last applied file (in memory only, decision C2)
   private String _appliedSha;
-  private QuotaSet _applied;
+  private volatile QuotaSet _applied;
   // log each distinct problem once while it persists
   private boolean _noFileLogged;
   private String _lastLoggedProblem;
@@ -296,7 +296,35 @@ public class QuotaSyncManager implements AutoCloseable {
       audit(changes);
       return Outcome.DRIFT_REAPPLIED;
     });
-    return outcome != null ? outcome : checkFile();
+    if (outcome != null) {
+      return outcome;
+    }
+    Outcome fileOutcome = checkFile();
+    if (fileOutcome == Outcome.INVALID_FILE) {
+      reportDriftWhileFileInvalid();
+    }
+    return fileOutcome;
+  }
+
+  /**
+   * While a newly deployed file is invalid, nothing is applied or repaired, but drift is still detected: the stored
+   * quotas are compared with the last valid (applied) file and any difference is reported (alert only).
+   */
+  private synchronized void reportDriftWhileFileInvalid() {
+    try {
+      List<QuotaDiff.Change> changes = QuotaDiff.diff(readStored().userQuotas(), _applied);
+      if (changes.isEmpty()) {
+        return;
+      }
+      _drifts.incrementAndGet();
+      QuotaDrift drift = new QuotaDrift(_appliedSha, changes, false, true);
+      LOG.warn("{}", drift);
+      _driftListener.onDrift(drift);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } catch (Exception e) {
+      LOG.warn("Quota drift check against the last valid file failed: {}", e.toString());
+    }
   }
 
   /**

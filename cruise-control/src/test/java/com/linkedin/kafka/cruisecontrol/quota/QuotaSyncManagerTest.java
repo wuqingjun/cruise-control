@@ -30,6 +30,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
@@ -200,6 +201,36 @@ public class QuotaSyncManagerTest {
     assertTrue(_drifts.get(1).reapplied());
     assertEquals(new QuotaSet(Map.of(QuotaSet.DEFAULT, Map.of("producer_byte_rate", 100.0),
                                      "Claim:a", Map.of("producer_byte_rate", 10.0))), _store.quotas());
+  }
+
+  /**
+   * While a newly deployed file is invalid, drift against the last valid file is reported (alert only), not repaired.
+   *
+   * @throws Exception On error.
+   */
+  @Test
+  public void testDriftAlertedWhileTheDeployedFileIsInvalid() throws Exception {
+    deploy(file("\"Claim:a\": {\"producer_byte_rate\": 10}"));
+    QuotaSyncManager manager = manager(true);
+    assertEquals(Outcome.APPLIED, manager.checkFile());
+    // a new file that fails validation (tampered after signing)
+    deploy(file("\"Claim:a\": {\"producer_byte_rate\": 20}"));
+    Files.writeString(_file, file("\"Claim:a\": {\"producer_byte_rate\": 99999}"));
+    // no drift: just the invalid file
+    assertEquals(Outcome.INVALID_FILE, manager.checkDrift());
+    assertEquals(0, _drifts.size());
+    // drift while the file is invalid: alerted against the last valid file, not repaired (even with REAPPLY)
+    _store._userQuotas.get("Claim:a").put("producer_byte_rate", 1e9);
+    assertEquals(Outcome.INVALID_FILE, manager.checkDrift());
+    assertEquals(1, _drifts.size());
+    assertTrue(_drifts.get(0).whileFileInvalid());
+    assertFalse(_drifts.get(0).reapplied());
+    assertTrue(_drifts.get(0).toString(), _drifts.get(0).toString().contains("the deployed file is invalid"));
+    assertEquals(1e9, _store._userQuotas.get("Claim:a").get("producer_byte_rate"), 0);
+    // a valid file again: applied, drift gone
+    deploy(file("\"Claim:a\": {\"producer_byte_rate\": 20}"));
+    assertEquals(Outcome.APPLIED, manager.checkDrift());
+    assertEquals(20.0, _store._userQuotas.get("Claim:a").get("producer_byte_rate"), 0);
   }
 
   @Test

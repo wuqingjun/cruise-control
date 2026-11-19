@@ -153,6 +153,9 @@ public class AclSyncManager implements AutoCloseable {
   private boolean _noFileLogged;
   private boolean _znodeAclsEnsured;
   private String _currentSha;
+  /** The last file applied to (or found in sync with) ZooKeeper: drift is still reported against it while a newly deployed file is invalid. */
+  private volatile AclTree _lastValid;
+  private volatile String _lastValidSha;
   private String _rejectedSha;
   private String _rejectedError;
   private final AtomicLong _lastAppliedMs = new AtomicLong(-1);
@@ -462,6 +465,8 @@ public class AclSyncManager implements AutoCloseable {
         return null;
       }
       AclTree desired = load(file.get());
+      _lastValid = desired;
+      _lastValidSha = file.get().sha256();
       if (store.policy().isProtecting()) {
         Outcome locked = withLock(store, () -> {
           int changed = store.ensureZnodeAcls();
@@ -483,7 +488,47 @@ public class AclSyncManager implements AutoCloseable {
       }
       return handleDrift(store, file.get(), desired, zkDiff, brokerDifferences);
     });
-    return outcome != null ? outcome : checkFile();
+    if (outcome != null) {
+      return outcome;
+    }
+    Outcome fileOutcome = checkFile();
+    if (fileOutcome == Outcome.INVALID_FILE) {
+      reportDriftWhileFileInvalid();
+    }
+    return fileOutcome;
+  }
+
+  /**
+   * While a newly deployed file is invalid, nothing is applied or repaired, but drift is still detected: ZooKeeper is
+   * compared with the last valid file (and the brokers with ZooKeeper) and any difference is reported (alert only).
+   */
+  private synchronized void reportDriftWhileFileInvalid() {
+    if (_lastValid == null) {
+      LOG.debug("No valid ACL file applied by this instance yet: no drift check while the deployed file is invalid.");
+      return;
+    }
+    try {
+      AclZkStore store = store();
+      Optional<AclZkStore.VersionedState> state = store.readState();
+      if (state.isEmpty() || !state.get().state().sha256().equals(_lastValidSha)) {
+        // ZooKeeper holds another file than the last valid one known here (e.g. another instance applied one).
+        return;
+      }
+      AclZkStore.Snapshot snapshot = store.readCurrent();
+      AclTreeDiff.Result zkDiff = AclTreeDiff.diff(snapshot.tree(), _lastValid, state.get().state().unmanaged());
+      AclVerifyResult brokerDifferences = _verifier.verify(snapshot.tree(), _settings._verifyTimeoutMs);
+      if (zkDiff.isEmpty() && brokerDifferences.isEmpty()) {
+        return;
+      }
+      _drifts.incrementAndGet();
+      AclDrift drift = new AclDrift(_lastValidSha, zkDiff.changes(), brokerDifferences, false, true);
+      LOG.warn("{}", drift);
+      _driftListener.onDrift(drift);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    } catch (Exception e) {
+      LOG.warn("ACL drift check against the last valid file failed: {}", e.toString());
+    }
   }
 
   private Outcome handleDrift(AclZkStore store, AclFileReader.AclFile file, AclTree desired, AclTreeDiff.Result zkDiff,
@@ -539,6 +584,8 @@ public class AclSyncManager implements AutoCloseable {
     }
     Outcome locked = withLock(store, () -> {
       applyWithRetries(store, file, desired);
+      _lastValid = desired;
+      _lastValidSha = file.sha256();
       return null;
     });
     if (locked != null) {
